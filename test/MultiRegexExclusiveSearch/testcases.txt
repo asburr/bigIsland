@@ -1,0 +1,9 @@
+PASS 1 - ranges of char
+PASS 2 - chars
+3 - not ranges of char
+4 - Words
+
+Not consuming beyond end of occ the chars that still match, this behaviour
+assumes submatching but that is not occurring.
+
+
