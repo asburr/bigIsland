@@ -1,4 +1,5 @@
-package bigIsland;
+package magpie;
+
 /* MultiRegexExclusiveSearch
  * 
  * A stream processing regex search algorith.

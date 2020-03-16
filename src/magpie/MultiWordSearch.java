@@ -1,4 +1,5 @@
-package bigIsland;
+package magpie;
+
 /* MultiWordSearch is an algorithm to match multiple words with one pass
  * of the file being searched.
  *

@@ -1,8 +1,8 @@
 
-OBJ=../obj
-PCK=$(OBJ)/bigIsland
+OBJ=../../obj
+PCK=$(OBJ)/magpie
 
-all: $(OBJ) $(PCK)/MultiWordSearch.class $(OBJ)/bigIsland/MultiRegexSearch.class $(OBJ)/bigIsland/MultiRegexExclusiveSearch.class
+all: $(OBJ) $(PCK) $(PCK)/MultiWordSearch.class $(PCK)/MultiRegexExclusiveSearch.class
 
 clean:
 	rm $(PCK)/*.class
@@ -11,5 +11,8 @@ clean:
 $(PCK):
 	mkdir -p $(PCK)
 
+$(OBJ):
+	mkdir -p $(OBJ)
+
 $(PCK)/%.class: %.java
-	javac -d $(OBJ) $<
+	javac -d $(PCK) $<
