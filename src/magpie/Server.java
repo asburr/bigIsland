@@ -37,6 +37,7 @@ class Server {
     }
     try {
       AsynchronousSocketChannel s=this.future.get(mstimeout,TimeUnit.MILLISECONDS);
+      this.future=null;
       Client client=new Client(s,this.bufferSize,this.headerFlag);
       this.clients.add(client);
       return client;
@@ -54,20 +55,22 @@ class Server {
   }
 
   public static void main(String[] args) {
-    if (args.length != 2) {
+    if (args.length != 1) {
       System.out.println("Usage: <listening port>");
       return;
     }
-    Server server=new Server(9001,100,0xffee);
+    System.out.println("Server listening on port "+args[0]);
+    Server server=new Server(Integer.parseInt(args[0]),100,0xffee);
     Client client=null;
     int count=0;
     while (true) {
       client=server.accept(10);
       if (client!=null) {
+        System.out.println("Server accepted connection from "+client.address+" sending="+count);
         client.sendBuf.putInt(count);
         client.write();
         while (!client.read()) {
-          System.out.println("Waiting for response from client");
+          System.out.println("Waiting for response from "+client.address);
           try { Thread.sleep(1000); } catch(Exception e) {}
         }
         count++;
