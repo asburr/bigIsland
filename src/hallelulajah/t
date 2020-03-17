@@ -1,5 +1,0 @@
-Hallelulajah.java:116: error: unreachable statement
-    pool.shutdown();     
-    ^
-1 error
-make: *** [../../obj/hallelulajah/Hallelulajah.class] Error 1
