@@ -108,7 +108,7 @@ public class Hallelulajah {
     while (true) {
       Client client=server.accept(100);
       if (client!=null) {
-        System.out.println("Server accepted connection from "+client.address);
+        System.out.println("Server accepted connection from "+client.addresses());
         Yahweh jah=new Yahweh(client,this);
         this.jahs.add(jah);
         pool.execute(jah); 

@@ -15,4 +15,4 @@ $(OBJ):
 	mkdir -p $(OBJ)
 
 $(PCK)/%.class: %.java
-	javac -d $(PCK) -classpath $(OBJ) $<
+	javac -d $(OBJ) -classpath $(OBJ) $<
