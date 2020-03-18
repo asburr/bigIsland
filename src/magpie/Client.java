@@ -4,24 +4,47 @@ import java.nio.channels.*;
 import java.nio.ByteBuffer;
 import java.net.SocketAddress;
 import java.net.InetSocketAddress;
+import java.net.StandardSocketOptions;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.nio.CharBuffer;
 
-class Client {
+public class Client {
 
-  AsynchronousSocketChannel client=null;
+  private AsynchronousSocketChannel client=null;
+  private boolean clientToServer=true;
+  public String addresses() {
+    if (this.client==null) return "Not connected";
+    try {
+      if (clientToServer) return this.client.getRemoteAddress()+"=>"+this.client.getLocalAddress();
+      return this.client.getLocalAddress()+"=>"+this.client.getRemoteAddress();
+    } catch (Exception ignore) {
+      return ignore.getMessage();
+    }
+  }
   InetSocketAddress listener=null;
-  public SocketAddress address=null;
+  private ServerFuture server=null;
+
   public ByteBuffer sendBuf=null;
+  public void sendBuf_SetString(String s) { this.sendBuf.asCharBuffer().put(s); }
+  public void sendBuf_String(String s) { this.sendBuf_SetString(s); this.write(); }
+  public String recvBuf_GetString() { return this.recvBuf.asCharBuffer().toString(); }
+
   public ByteBuffer recvBuf=null;
   int headerFlag=0;
   public boolean shutdown=false;
 
-  public Client(AsynchronousSocketChannel client,int bufferSize,int headerFlag) {
+  public Client(AsynchronousSocketChannel client,int bufferSize,int headerFlag,ServerFuture server) {
     try {
+      client.setOption(StandardSocketOptions.SO_KEEPALIVE, true);
+      client.setOption(StandardSocketOptions.TCP_NODELAY, true);
+/*
+      client.setOption(StandardSocketOptions.SO_REUSEADDR, true)
+      client.setOption(StandardSocketOptions.SO_RCVBUF, 16 * 1024);
+*/
+      this.server=server;
       this.client=client;
       this.headerFlag=headerFlag;
-      this.address=this.client.getLocalAddress();
       this.sendBuf=ByteBuffer.allocate(bufferSize);
       this.recvBuf=ByteBuffer.allocate(bufferSize);
       this.resetSendBuf();
@@ -33,12 +56,12 @@ class Client {
   }
   public Client(String host, int port,int bufferSize,int headerFlag) {
     try {
+      this.clientToServer=false;
       this.client=AsynchronousSocketChannel.open();
       this.listener=new InetSocketAddress(host, port);
       Future future = client.connect(this.listener);
       future.get(100,TimeUnit.MILLISECONDS);
       this.headerFlag=headerFlag;
-      this.address=this.client.getLocalAddress();
       this.recvBuf=ByteBuffer.allocate(bufferSize);
       this.sendBuf=ByteBuffer.allocate(bufferSize);
       this.resetSendBuf();
@@ -58,19 +81,25 @@ class Client {
     if (this.shutdown) return;
     this.shutdown=true;
     try {
+      System.err.println("Client closed:"+this.addresses());
+      this.server.release(this);
+    } catch (Exception e) {
+      System.err.println("Failed to release from server "+this.addresses());
+    }
+    try {
       this.client.close();
       this.client=null;
     } catch (Exception e) {
-      System.err.println("Failed to close socket "+this.address);
+      System.err.println("Failed to close socket "+this.addresses());
     }
     this.recvBuf=null;
     this.sendBuf=null;
-    this.address=null;
   }
 
   // Blocking write.
   // Write length first, then buffer.
   public void write() {
+    if (this.shutdown) return;
     int size=this.sendBuf.position()-8;
     this.sendBuf.flip();
     this.sendBuf.putInt(4,size);
@@ -92,6 +121,7 @@ class Client {
   }
 
   public boolean read() {
+    if (this.shutdown) return false;
     //
     // Read header
     //
@@ -110,6 +140,7 @@ class Client {
       }
     }
     if (read==0) return false;
+    if (read==-1) { this.close(); return false; }
     if (size != read) {
       System.err.println("Failed to read header, size="+size+" read="+read);
     }
@@ -137,6 +168,7 @@ class Client {
       }
     }
     if (read==0) return false;
+    if (read==-1) { this.close(); return false; }
     if (size != read) {
       System.err.println("Failed to read body, size="+read+" expecting="+size);
     }
