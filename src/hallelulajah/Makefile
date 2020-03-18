@@ -5,7 +5,7 @@ PCK=$(OBJ)/hallelulajah
 all: $(OBJ) $(PCK) $(PCK)/Hallelulajah.class
 
 clean:
-	rm $(PCK)/*.class
+	rm -f $(PCK)/*.class
 
 
 $(PCK):
