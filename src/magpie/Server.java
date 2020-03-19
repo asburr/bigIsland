@@ -7,6 +7,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.LinkedList;
 import java.net.InetSocketAddress;
+import java.util.concurrent.TimeoutException;
 
 class ServerFutureImp extends ServerFuture {
   private Server server=null;
@@ -39,6 +40,7 @@ public class Server {
       try {
         this.future=this.server.accept();
       } catch (Exception e) {
+e.printStackTrace();
         return null;
       }
     }
@@ -46,9 +48,12 @@ public class Server {
       AsynchronousSocketChannel s=this.future.get(mstimeout,TimeUnit.MILLISECONDS);
       this.future=null;
       Client client=new Client(s,this.bufferSize,this.headerFlag,this.serverFuture);
-      this.clients.add(client);
+      synchronized(this.clients) { this.clients.add(client); }
       return client;
+    } catch (TimeoutException e) {
+      return null;
     } catch (Exception e) {
+e.printStackTrace();
       return null;
     }
   }
@@ -76,9 +81,8 @@ public class Server {
         System.out.println("Server accepted connection from "+client.addresses()+" sending="+count);
         client.sendBuf.putInt(count);
         client.write();
-        while (!client.read()) {
+        while (!client.read(1,TimeUnit.MILLISECONDS)) {
           System.out.println("Waiting for response from "+client.addresses());
-          try { Thread.sleep(1000); } catch(Exception e) {}
         }
         count++;
         int i=client.recvBuf.getInt();

@@ -4,11 +4,12 @@ import java.io.BufferedReader;
 import java.io.IOException; 
 import java.io.InputStreamReader; 
 import java.nio.CharBuffer;
+import java.util.concurrent.TimeUnit;
 
 public class Cli {
   Client client=null;
   public Cli(String host, int port) {
-    Client client=new Client(host,port,100,0xffee);
+    this.client=new Client(host,port,100,0xffee);
   }
   public void stdin() { try {
     System.out.print(">"); System.out.flush();
@@ -16,15 +17,14 @@ public class Cli {
     String line = reader.readLine(); 
     while (line!=null) {
       if (line.equals("x")) return;
-      client.sendBuf_SetString(line);
-      client.write();
+      client.sendBuf_String(line);
       try { Thread.sleep(100); } catch(Exception e) {}
-      while (!client.read()) {
-        System.out.println("Waiting for response from server");
-        try { Thread.sleep(1000); } catch(Exception e) {}
+      while (client.read(100,TimeUnit.MILLISECONDS)) {
+        System.out.print(client.recvBuf_GetString(-1));
       }
-      System.out.println(client.recvBuf_GetString());
+      if (client.shutdown) { System.out.println("Server closed"); return; }
       System.out.print(">"); System.out.flush();
+      line = reader.readLine(); 
     }
   } catch (Exception e) {
     e.printStackTrace();

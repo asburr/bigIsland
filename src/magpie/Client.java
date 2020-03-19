@@ -7,7 +7,8 @@ import java.net.InetSocketAddress;
 import java.net.StandardSocketOptions;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.nio.CharBuffer;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.ExecutionException;
 
 public class Client {
 
@@ -26,9 +27,20 @@ public class Client {
   private ServerFuture server=null;
 
   public ByteBuffer sendBuf=null;
-  public void sendBuf_SetString(String s) { this.sendBuf.asCharBuffer().put(s); }
-  public void sendBuf_String(String s) { this.sendBuf_SetString(s); this.write(); }
-  public String recvBuf_GetString() { return this.recvBuf.asCharBuffer().toString(); }
+  private String sendString=null;
+  public void sendBuf_SetString(String s) {
+    int space=this.sendBuf.capacity()-this.sendBuf.position();
+    if (s.length() > space) s=s.substring(0,space);
+    this.sendBuf.put(s.getBytes());
+  }
+  public void sendBuf_String(String s) { this.sendString=s; this.write(); }
+  public String recvBuf_GetString(int l) { 
+    if (l==-1) l=this.recvBuf.remaining();
+    if (l==0) return "";
+    byte[] bytes=new byte[l];
+    this.recvBuf.get(bytes);
+    return new String(bytes);
+  }
 
   public ByteBuffer recvBuf=null;
   int headerFlag=0;
@@ -37,8 +49,8 @@ public class Client {
   public Client(AsynchronousSocketChannel client,int bufferSize,int headerFlag,ServerFuture server) {
     try {
       client.setOption(StandardSocketOptions.SO_KEEPALIVE, true);
-      client.setOption(StandardSocketOptions.TCP_NODELAY, true);
 /*
+      client.setOption(StandardSocketOptions.TCP_NODELAY, true);
       client.setOption(StandardSocketOptions.SO_REUSEADDR, true)
       client.setOption(StandardSocketOptions.SO_RCVBUF, 16 * 1024);
 */
@@ -58,6 +70,12 @@ public class Client {
     try {
       this.clientToServer=false;
       this.client=AsynchronousSocketChannel.open();
+      client.setOption(StandardSocketOptions.SO_KEEPALIVE, true);
+/*
+      client.setOption(StandardSocketOptions.TCP_NODELAY, true);
+      client.setOption(StandardSocketOptions.SO_REUSEADDR, true)
+      client.setOption(StandardSocketOptions.SO_RCVBUF, 16 * 1024);
+*/
       this.listener=new InetSocketAddress(host, port);
       Future future = client.connect(this.listener);
       future.get(100,TimeUnit.MILLISECONDS);
@@ -82,7 +100,7 @@ public class Client {
     this.shutdown=true;
     try {
       System.err.println("Client closed:"+this.addresses());
-      this.server.release(this);
+      if (this.server!=null) this.server.release(this);
     } catch (Exception e) {
       System.err.println("Failed to release from server "+this.addresses());
     }
@@ -102,7 +120,8 @@ public class Client {
     if (this.shutdown) return;
     int size=this.sendBuf.position()-8;
     this.sendBuf.flip();
-    this.sendBuf.putInt(4,size);
+    if (this.sendString!=null) this.sendBuf.putInt(4,size+this.sendString.length());
+    else this.sendBuf.putInt(4,size);
     Future<Integer> future=this.client.write(this.sendBuf);
     int written=0;
     while (!this.shutdown) {
@@ -118,62 +137,111 @@ public class Client {
       System.err.println("Failed to send all bytes, size="+size+" written="+written);
     }
     this.resetSendBuf();
+    if (this.sendString!=null) {
+      future=this.client.write(ByteBuffer.wrap(this.sendString.getBytes()));
+      written=0;
+      while (!this.shutdown) {
+        try {
+          written=future.get();
+          break;
+        } catch(InterruptedException e) {
+        } catch(Exception e) {
+          e.printStackTrace();
+        }
+      }
+      if (this.sendString.length() != written) {
+        System.err.println("Failed to send all bytes, size="+this.sendString.length()+" written="+written);
+      }
+      this.sendString=null;
+      this.resetSendBuf();
+    }
   }
 
-  public boolean read() {
+  // Timeout or Blocking read.
+  private Future<Integer> futureHdr=null;
+  private Future<Integer> futureBdy=null;
+  private int bdySize=0;
+  public boolean read(long timeout, TimeUnit unit) {
     if (this.shutdown) return false;
     //
     // Read header
     //
-    this.recvBuf.clear();
-    int size=8;
-    this.recvBuf.limit(size);
-    Future<Integer> future=this.client.read(this.recvBuf);
     int read=0;
-    while (!this.shutdown) {
-      try {
-        read=future.get();
-        break;
-      } catch(InterruptedException e) {
-      } catch(Exception e) {
-        e.printStackTrace();
+    if (this.bdySize==0 && this.futureHdr==null && this.futureBdy==null) {
+      this.recvBuf.clear();
+      this.recvBuf.limit(8);
+      this.futureHdr=this.client.read(this.recvBuf);
+    }
+    if (this.bdySize==0 && this.futureHdr!=null) {
+      read=0;
+      while (!this.shutdown) {
+        try {
+          read=this.futureHdr.get(timeout,unit);
+          this.futureHdr=null;
+          break;
+        } catch(TimeoutException e) {
+          return false;
+        } catch(InterruptedException e) {
+        } catch(ExecutionException e) {
+          this.close();
+          return false;
+        } catch(Exception e) {
+          e.printStackTrace();
+          return false;
+        }
       }
+      if (read==0) return false;
+      if (read==-1) { this.close(); return false; }
+      if (this.recvBuf.limit() != read) {
+        System.err.println("Failed to read header, size="+this.recvBuf.limit()+" read="+read);
+      }
+      this.recvBuf.rewind();
+      int flag=this.recvBuf.getInt();
+      if (flag != this.headerFlag) {
+        System.err.println("Failed to read header, flag="+flag+" expecting="+this.headerFlag);
+        return false;
+      }
+      this.bdySize=this.recvBuf.getInt();
+      if (this.bdySize==0) return false;
     }
-    if (read==0) return false;
-    if (read==-1) { this.close(); return false; }
-    if (size != read) {
-      System.err.println("Failed to read header, size="+size+" read="+read);
-    }
-    this.recvBuf.rewind();
-    int flag=this.recvBuf.getInt();
-    if (flag != this.headerFlag) {
-      System.err.println("Failed to read header, flag="+flag+" expecting="+this.headerFlag);
-      return false;
-    }
-    size=this.recvBuf.getInt();
-    if (size==0) return false;
     //
     // Read body
     //
-    this.recvBuf.clear();
-    this.recvBuf.limit(size);
-    future=this.client.read(this.recvBuf);
-    while (!this.shutdown) {
-      try {
-        read=future.get();
-        break;
-      } catch(InterruptedException e) {
-      } catch(Exception e) {
-        e.printStackTrace();
+    if (this.bdySize>0 && this.futureBdy==null) {
+      this.recvBuf.clear();
+      if (this.bdySize <= this.recvBuf.capacity()) {
+        this.recvBuf.limit(this.bdySize);
+        this.bdySize=0;
+      } else {
+        this.recvBuf.limit(this.recvBuf.capacity());
+        this.bdySize-=this.recvBuf.capacity();
       }
+      this.futureBdy=this.client.read(this.recvBuf);
     }
-    if (read==0) return false;
-    if (read==-1) { this.close(); return false; }
-    if (size != read) {
-      System.err.println("Failed to read body, size="+read+" expecting="+size);
+    if (this.futureBdy!=null) {
+      read=0;
+      while (!this.shutdown) {
+        try {
+          read=this.futureBdy.get(timeout,unit);
+          this.futureBdy=null;
+          break;
+        } catch(TimeoutException e) {
+          return false;
+        } catch(InterruptedException e) {
+        } catch(Exception e) {
+          e.printStackTrace();
+          return false;
+        }
+      }
+      if (read==0) return false;
+      if (read==-1) { this.close(); return false; }
+      if (this.recvBuf.limit() != read) {
+        System.err.println("Failed to read body, size="+read+" expecting="+this.recvBuf.limit());
+      }
+      this.recvBuf.flip();
+      return true;
     }
-    this.recvBuf.flip();
-    return true;
+    return false;
   }
   public static void main(String[] args) { try {
     if (args.length != 2) {
@@ -181,9 +249,8 @@ public class Client {
       return;
     }
     Client client=new Client(args[0],Integer.parseInt(args[1]),100,0xffee);
-    while (!client.read()) {
+    while (!client.read(1,TimeUnit.SECONDS)) {
       System.out.println("Waiting for response from client");
-      try { Thread.sleep(1000); } catch(Exception e) {}
     }
     int i=client.recvBuf.getInt()+1;
     client.sendBuf.putInt(i);
