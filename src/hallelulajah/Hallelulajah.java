@@ -21,19 +21,21 @@ class JournalO {
   public JournalO(File dir) {
     try {
       this.journal=new File(dir+File.separator+"J_"+UUID.randomUUID());
-      this.j=new RandomAccessFile(this.journal,"wd");
+      this.j=new RandomAccessFile(this.journal,"rwd");
 // Append not needed we are creating a new file every occurance.
 // this.j.seek(this.j.length());
     } catch (FileNotFoundException e) {
       e.printStackTrace();
     }
   }
+  private String empty="";
   public void write(char cmd, String key, Row row) {
     try {
       this.j.writeLong(System.nanoTime());
       this.j.writeChar(cmd);
       this.j.writeUTF(key);
-      this.j.writeUTF(row.s);
+      if (row==null) this.j.writeUTF(this.empty);
+      else this.j.writeUTF(row.s);
     } catch(Exception e) {
       e.printStackTrace();
       this.close();
@@ -91,10 +93,15 @@ class JournalI {
 class JournalIs {
   public JournalIs(File dir) {
     for (File f: dir.listFiles()) {
+System.err.println(""+f);
       if (!f.getName().startsWith("J_")) continue;
       JournalI j=new JournalI(f);
       j.next();
-      if (j.eof) continue;
+      if (j.eof) {
+System.err.println("empty journal "+f+" deleting");
+        try { f.delete(); } catch(Exception e) {e.printStackTrace();}
+        continue;
+      }
       this.insert(j);
     }
   }
@@ -105,6 +112,7 @@ class JournalIs {
       this.a.add(i,j); // i started after or at the same time as j.
       return;
     }
+    this.a.add(j);
   }
   public JournalI get() {
     if (a.size()==0) return null;
@@ -133,6 +141,7 @@ class Yahweh implements Runnable {
   private Row row=null;
   private String key=null;
   public void run() {
+    boolean journalledConnect=false;
     while (!this.client.shutdown) {
       if (!client.read(10,TimeUnit.MILLISECONDS)) {
         continue;
@@ -155,6 +164,7 @@ class Yahweh implements Runnable {
         this.table=hall.getTable(a[1]);
         if (this.table!=null) this.client.sendBuf_String("Success : connected to table name "+this.table.name+"\n");
         else this.client.sendBuf_String("Fail : no such table name "+a[1]+"\n");
+        journalledConnect=false;
         break;
       }
       case '+': { // Add table
@@ -162,6 +172,7 @@ class Yahweh implements Runnable {
         this.table=hall.newTable(a[1]);
         this.client.sendBuf_String("Success : Table created or already exists with the name "+this.table.name+"\n");
         this.j.write('+',this.table.name,null);
+        journalledConnect=false;
         break;
       }
       case '-': { // Delete table
@@ -178,10 +189,17 @@ class Yahweh implements Runnable {
         if (a.length != 3) { this.client.sendBuf_String("usage : a,<key>,<data>\n"); continue; }
         if (this.table==null) { this.client.sendBuf_String("Fail : please connect (c) to a table\n"); continue; }
         this.key=a[1];
-        this.row=new Row(this.key.substring(2+this.key.length()));
+System.err.println(cmd);
+System.err.println(this.key);
+        this.row=new Row(cmd.substring(3+this.key.length()));
+System.err.println(this.row.s);
         Row r=this.table.addRow(this.key,this.row);
         if (r!=null) this.client.sendBuf_String("Fail : row exists already at this key\n");
         else {
+          if (!journalledConnect) {
+            journalledConnect=true;
+            this.j.write('c',this.table.name,null);
+          }
           this.j.write('a',this.key,this.row);
           this.client.sendBuf_String("Success : row added\n");
         }
@@ -193,7 +211,11 @@ class Yahweh implements Runnable {
         this.key=a[1];
         this.row=this.table.delRow(this.key);
         if (this.row==null) { this.client.sendBuf_String("Fail : row does not exist\n"); continue; }
-        this.j.write('d',this.key,this.row);
+        if (!journalledConnect) {
+          journalledConnect=true;
+          this.j.write('c',this.table.name,null);
+        }
+        this.j.write('d',this.key,null);
         this.row=null;
         this.client.sendBuf_String("Success : deleted row at "+this.key+"\n");
         break;
@@ -204,18 +226,19 @@ class Yahweh implements Runnable {
         this.key=a[1];
         this.row=null;
         this.row=this.table.getRow(this.key);
-        this.client.sendBuf_String(this.row.s);
+        if (this.row!=null) this.client.sendBuf_String(this.row.s+"\n");
+        else this.client.sendBuf_String("Fail : no such row\n");
         break;
       }
       default: {
         this.client.sendBuf_String("Usage: [x,c,+,-,a,d,q]\nDescription:"+
 "\nx : exit :"+
-"\nc <table name> : connect to table : table must already exist"+
-"\n+ <table name> : add table : no error when table already exists"+
+"\nc,<table name> : connect to table : table must already exist"+
+"\n+,<table name> : add table : no error when table already exists"+
 "\n- : remove table : connect(c)"+
-"\na <key>,<data> : add row : connect(c)"+
-"\nd <key> : deletes row and returns row data : connect(c)"+
-"\nq <key> : return row data : connect(c)"+
+"\na,<key>,<data> : add row : connect(c)"+
+"\nd,<key> : deletes row and returns row data : connect(c)"+
+"\nq,<key> : return row data : connect(c)"+
 "\n"
 );
         break;
@@ -228,6 +251,7 @@ class Yahweh implements Runnable {
 class Row {
   public String s;
   public Row(String s) { this.s=s; }
+  public Row(Row o) { this.s=o.s; }
   public void set(String s) { this.s=s; }
 }
 
@@ -236,7 +260,7 @@ class Table {
   ConcurrentSkipListMap<String,Row> rows=new ConcurrentSkipListMap<String,Row>();
   public Table(String name) { this.name=name; }
   public Row addRow(String key,Row row) {
-    return this.rows.putIfAbsent(key,row);
+    return this.rows.putIfAbsent(key,new Row(row));
   }
   public Row delRow(String key) {
     return this.rows.remove(key);
@@ -261,6 +285,21 @@ public class Hallelulajah {
     } else if (!this.dir.isDirectory()) {
       System.err.println("Fail : "+dir+" exists but is not a directory");
       System.exit(0);
+    }
+    JournalIs js=new JournalIs(this.dir);
+    JournalI i=null;
+    Table table=null;
+    while ((i=js.get())!=null) {
+System.err.println("Journal "+i.time+" cmd="+i.cmd+" key="+i.key+" data="+i.row.s);
+      switch (i.cmd) {
+      case 'c': { table=this.getTable(i.key); break; }
+      case '+': { table=this.newTable(i.key); break; }
+      case '-': { this.delTable(i.key,table); table=null; break; }
+      case 'a': { table.addRow(i.key,i.row); break; }
+      case 'd': { table.delRow(i.key); break; }
+      default: { System.err.println("Fail : journal command "+i.cmd); return; }
+      }
+      js.put(i);
     }
   }
 
