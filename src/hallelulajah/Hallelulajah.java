@@ -14,33 +14,133 @@ import java.util.LinkedList;
 import java.util.concurrent.TimeUnit;
 import java.util.UUID;
 import java.util.ArrayList;
+import java.util.Date;
+import java.text.SimpleDateFormat;
+import java.util.Objects;
+import java.util.Set;
+import java.util.TreeSet;
+
+// TODO make a pool of reusable JMRecord so GC is not so busy.
+// TODO make a pool of LinkedList<JMRecord>, for the same reasons.
+class JMRecord implements Comparable<JMRecord> {
+  public long ts;
+  public char cmd;
+  public String key,data;
+  public JMRecord(long ts,char cmd, String key, String data) {
+    this.ts=ts; this.cmd=cmd; this.key=key; this.data=data;
+  }
+  public JMRecord(JMRecord o) {
+    this.ts=o.ts; this.cmd=o.cmd; this.key=o.key; this.data=o.data;
+  }
+  @Override public int compareTo(JMRecord o) {
+    long d=this.ts - o.ts;
+    if (d<0) return -1;
+    if (d>0) return 1;
+    return 0;
+  }
+  public int compareTo(long ts) {
+    long d=this.ts - ts;
+    if (d<0) return -1;
+    if (d>0) return 1;
+    return 0;
+  }
+  @Override public boolean equals(Object o) {
+    if (this == o) return true;
+    if (!(o instanceof JMRecord)) return false;
+    return (this.compareTo((JMRecord)o)==0);
+  }
+   @Override public int hashCode() {
+     return Objects.hash(getSigFields());     
+   }
+   private Object[] getSigFields() {
+     Object[] result = { ts, cmd, key, data };
+     return result;     
+   }
+}
+
+class JournalM { // To Memory.
+  LinkedList<JMRecord> m=new LinkedList<JMRecord>();
+  public JournalM() { }
+
+  boolean getting=false;
+  long upto=0L;
+  LinkedList<JMRecord> g=new LinkedList<JMRecord>();
+  public void write(char cmd, String key, String row) {
+    long ts=System.nanoTime();
+    if (this.getting) this.getting();
+    if (cmd!='B') this.m.add(new JMRecord(ts,cmd,key,row));
+  }
+  private void getting() {
+    LinkedList<JMRecord> x=this.g;
+    this.g=this.m;
+    this.m=x; this.m.clear();
+    JMRecord r=this.g.peekLast();
+    while (r.compareTo(this.upto)>0) { // Last record newer than upto.
+      r=this.g.removeLast();
+      this.m.offerFirst(r); // Add newer journal event back to the head of the list.
+      r=this.g.peekLast();
+    }
+    // Find table name in list.
+    for (int i=this.g.size()-1;i>=0;i--) {
+      r=this.g.get(i);
+      if (r.cmd=='+' || r.cmd=='c') { // this is a table event, with the table name!
+        this.m.offerFirst(new JMRecord(r)); // Duplicate the event to head of this journal list.
+        break;
+      }
+    }
+    this.getting=false;
+  }
+  public LinkedList<JMRecord> get(long until) {
+    if (this.m.size()==0) return null;
+    this.upto=until;
+    this.getting=true;
+    while (this.getting) try { Thread.sleep(10); } catch(Exception e) {}
+    if (this.g.size()==0) return null;
+    return this.g;
+  }
+  public void close() { // Make sure memory journalling has been written to disk before closing.
+    while (this.m.size()>0) {
+      if (this.getting) this.getting();
+      try { Thread.sleep(50); } catch(Exception e) {}
+    }
+  }
+  public void commit(Hallelulajah hall) { // Make sure memory journalling has been written to disk.
+    while (this.m.size()>0) { // Journalling still in memory, wait for Hall to get it.
+      if (this.getting) { this.getting(); break; }
+      try { Thread.sleep(50); } catch(Exception e) {}
+    }
+    // If Hall is writing a commit to disk, wait for that to finish.
+    while (!hall.committed) try { Thread.sleep(50); } catch(Exception e) {}
+  }
+}
 
 class JournalO {
   private File journal=null;
   private RandomAccessFile j=null;
-  public JournalO(File dir) {
+  public JournalO(File f,boolean append) {
     try {
-      this.journal=new File(dir+File.separator+"J_"+UUID.randomUUID());
+      this.journal=f;
       this.j=new RandomAccessFile(this.journal,"rwd");
-// Append not needed we are creating a new file every occurance.
-// this.j.seek(this.j.length());
+      // Append is the following seek!
+      if (append) this.j.seek(this.j.length());
     } catch (FileNotFoundException e) {
       e.printStackTrace();
     }
   }
   private String empty="";
-  public void write(char cmd, String key, Row row) {
+  public void write(char cmd, String key, String row) {
     try {
       this.j.writeLong(System.nanoTime());
       this.j.writeChar(cmd);
       this.j.writeUTF(key);
       if (row==null) this.j.writeUTF(this.empty);
-      else this.j.writeUTF(row.s);
+      else this.j.writeUTF(row);
     } catch(Exception e) {
       e.printStackTrace();
       this.close();
     }
   }
+  public long size() { return j.length(); }
   public void close() {
     try {
       this.journal=null;
@@ -65,19 +165,22 @@ class JournalI {
   public long time;
   public char cmd='?';
   public String key=null;
-  public Row row=new Row("");
+  public String row=new String("");
   public boolean eof=false;
-  public void next() {
+  public boolean next() {
     try {
       this.time=this.j.readLong();
       this.cmd=this.j.readChar();
       this.key=this.j.readUTF();
-      this.row.set(this.j.readUTF());
+      this.row=this.j.readUTF();
+      return true;
     } catch (EOFException e) {
       this.eof=true;
+      return false;
     } catch (IOException e) {
       e.printStackTrace();
       this.eof=true;
+      return false;
     }
   }
   // compare < 0, when this started before i
@@ -88,62 +191,27 @@ class JournalI {
   }
 }
 
-// Maintains an ordered array of Journal files, ordered by start TimeStamp
-// of transaction.
-class JournalIs {
-  public JournalIs(File dir) {
-    for (File f: dir.listFiles()) {
-System.err.println(""+f);
-      if (!f.getName().startsWith("J_")) continue;
-      JournalI j=new JournalI(f);
-      j.next();
-      if (j.eof) {
-System.err.println("empty journal "+f+" deleting");
-        try { f.delete(); } catch(Exception e) {e.printStackTrace();}
-        continue;
-      }
-      this.insert(j);
-    }
-  }
-  private ArrayList<JournalI> a=new ArrayList<JournalI>();
-  private void insert(JournalI j) {
-    for (int i=0;i<a.size();i++) {
-      if (a.get(i).compare(j) < 0) continue; // i started before j.
-      this.a.add(i,j); // i started after or at the same time as j.
-      return;
-    }
-    this.a.add(j);
-  }
-  public JournalI get() {
-    if (a.size()==0) return null;
-    return a.remove(0);
-  }
-  public void put(JournalI j) {
-    j.next();
-    if (j.eof) return;
-    this.insert(j);
-  }
-}
-
 class Yahweh implements Runnable {
 
   private Client client=null;
   private Hallelulajah hall=null;
-  private JournalO j=null;
+  private JournalM j=null;
+  public LinkedList<JMRecord> get(long until) { this.j.get(until); }
 
   public Yahweh(Client client,Hallelulajah hall) {
     this.client=client;
     this.hall=hall;
-    this.j=new JournalO(hall.dir);
+    this.j=new JournalM();
   }
 
   private Table table=null;
-  private Row row=null;
+  private String row=null;
   private String key=null;
   public void run() {
     boolean journalledConnect=false;
     while (!this.client.shutdown) {
-      if (!client.read(10,TimeUnit.MILLISECONDS)) {
+      if (!client.read(50,TimeUnit.MILLISECONDS)) {
+        this.j.write('B',null,null); // Send blank event, to service any get of the journaling.
         continue;
       }
       String cmd=this.client.recvBuf_GetString(-1);
@@ -151,7 +219,13 @@ class Yahweh implements Runnable {
       String a[]=cmd.split(",",-1);
       switch (a[0].charAt(0)) {
       case 'x': {
+        this.j.close();
         this.client.sendBuf_String("Success : exiting connection\n");
+        return;
+      }
+      case 's': {
+        this.j.commit(this.hall);
+        this.client.sendBuf_String("Success : commits all changes to disk\n");
         return;
       }
       case 'c': { // Connect to table
@@ -178,6 +252,7 @@ class Yahweh implements Runnable {
       case '-': { // Delete table
         if (a.length != 1) { this.client.sendBuf_String("Usage : -\n"); continue; }
         if (this.table==null) { this.client.sendBuf_String("Fail : Please connect (c) to a table\n"); continue; }
+        if (this.hall.backingUp) this.hall.d_addtable(this.table.name,this.table)
         if (this.hall.delTable(this.table.name,this.table)) {
           this.j.write('-',this.table.name,null);
           this.client.sendBuf_String("Success : table "+this.table.name+" deleted\n");
@@ -189,11 +264,8 @@ class Yahweh implements Runnable {
         if (a.length != 3) { this.client.sendBuf_String("usage : a,<key>,<data>\n"); continue; }
         if (this.table==null) { this.client.sendBuf_String("Fail : please connect (c) to a table\n"); continue; }
         this.key=a[1];
-System.err.println(cmd);
-System.err.println(this.key);
-        this.row=new Row(cmd.substring(3+this.key.length()));
-System.err.println(this.row.s);
-        Row r=this.table.addRow(this.key,this.row);
+        this.row=cmd.substring(3+this.key.length());
+        String r=this.table.addRow(this.key,this.row);
         if (r!=null) this.client.sendBuf_String("Fail : row exists already at this key\n");
         else {
           if (!journalledConnect) {
@@ -209,6 +281,7 @@ System.err.println(this.row.s);
         if (a.length != 2) { this.client.sendBuf_String("Usage : d,<key>\n"); continue; }
         if (this.table==null) { this.client.sendBuf_String("Fail : please connect (c) to a table\n"); continue; }
         this.key=a[1];
+        if (this.hall.backingUp) this.hall.d_addRow(this.table.name,this.row,this.table.getRow(this.key))
         this.row=this.table.delRow(this.key);
         if (this.row==null) { this.client.sendBuf_String("Fail : row does not exist\n"); continue; }
         if (!journalledConnect) {
@@ -220,13 +293,29 @@ System.err.println(this.row.s);
         this.client.sendBuf_String("Success : deleted row at "+this.key+"\n");
         break;
       }
+      case 'r': { // Replace row
+        if (a.length != 3) { this.client.sendBuf_String("Usage : r,<key>,<data>\n"); continue; }
+        if (this.table==null) { this.client.sendBuf_String("Fail : please connect (c) to a table\n"); continue; }
+        this.key=a[1];
+        this.row=cmd.substring(3+this.key.length());
+        String oldRow=this.table.replaceRow(this.key,this.row);
+        if (oldRow==null) { this.client.sendBuf_String("Fail : row does not exist\n"); continue; }
+        if (this.hall.backingUp) this.hall.d_addRow(this.table.name,this.row,oldRow);
+        if (!journalledConnect) {
+          journalledConnect=true;
+          this.j.write('c',this.table.name,null);
+        }
+        this.j.write('r',this.key,this.row);
+        this.client.sendBuf_String("Success : replace row at "+this.key+"\n");
+        break;
+      }
       case 'q': { // Query table
         if (a.length != 2) { this.client.sendBuf_String("Usage : q,<key>\n"); continue; }
         if (this.table==null) { this.client.sendBuf_String("Fail : please connect to a table\n"); continue; }
         this.key=a[1];
         this.row=null;
         this.row=this.table.getRow(this.key);
-        if (this.row!=null) this.client.sendBuf_String(this.row.s+"\n");
+        if (this.row!=null) this.client.sendBuf_String(this.row+"\n");
         else this.client.sendBuf_String("Fail : no such row\n");
         break;
       }
@@ -248,24 +337,20 @@ System.err.println(this.row.s);
   }
 }
 
-class Row {
-  public String s;
-  public Row(String s) { this.s=s; }
-  public Row(Row o) { this.s=o.s; }
-  public void set(String s) { this.s=s; }
-}
-
 class Table {
-  String name=null;
-  ConcurrentSkipListMap<String,Row> rows=new ConcurrentSkipListMap<String,Row>();
+  public String name=null;
+  ConcurrentSkipListMap<String,String> rows=new ConcurrentSkipListMap<String,String>();
   public Table(String name) { this.name=name; }
-  public Row addRow(String key,Row row) {
-    return this.rows.putIfAbsent(key,new Row(row));
+  public String addRow(String key,String row) {
+    return this.rows.putIfAbsent(key,new String(row));
   }
-  public Row delRow(String key) {
+  public String delRow(String key) {
     return this.rows.remove(key);
   }
-  public Row getRow(String key) {
+  public String replaceRow(String key,String row) {
+    return this.rows.replace(key,row);
+  }
+  public String getRow(String key) {
     return this.rows.get(key);
   }
 }
@@ -273,7 +358,12 @@ class Table {
 public class Hallelulajah {
 
   Server server=null;
+  public long journalMaxSize=10000L;
   public File dir=null;
+  public File backupFile=null;
+  public File newBackupFile=null;
+  public File journalFile=null;
+  public JournalO j=null;
   public Hallelulajah(String host, int port, String dir) {
     this.server=new Server(port,100,0xffee);
     this.dir=new File(dir);
@@ -286,11 +376,20 @@ public class Hallelulajah {
       System.err.println("Fail : "+dir+" exists but is not a directory");
       System.exit(0);
     }
-    JournalIs js=new JournalIs(this.dir);
-    JournalI i=null;
+    JournalO j=new JournalO(this.journalFile,true);
+    this.backupFile=new File(this.dir+File.separator+"Backup");
+    this.newBackupFile=new File(this.dir+File.separator+"NewBackup");
+    this.readFile(this.backupFile);
+    this.journalFile=new File(this.dir+File.separator+"Journal");
+    this.readFile(this.journalFile);
+  }
+
+  private void readFile(File f) {
+    if (!f.exists()) return;
+    JournalI i=new JournalI(f);
     Table table=null;
-    while ((i=js.get())!=null) {
-System.err.println("Journal "+i.time+" cmd="+i.cmd+" key="+i.key+" data="+i.row.s);
+    while (i.next()) {
+//System.err.println("Reading "+i.time+" cmd="+i.cmd+" key="+i.key+" data="+i.row);
       switch (i.cmd) {
       case 'c': { table=this.getTable(i.key); break; }
       case '+': { table=this.newTable(i.key); break; }
@@ -299,7 +398,6 @@ System.err.println("Journal "+i.time+" cmd="+i.cmd+" key="+i.key+" data="+i.row.
       case 'd': { table.delRow(i.key); break; }
       default: { System.err.println("Fail : journal command "+i.cmd); return; }
       }
-      js.put(i);
     }
   }
 
@@ -307,6 +405,7 @@ System.err.println("Journal "+i.time+" cmd="+i.cmd+" key="+i.key+" data="+i.row.
   public void start() {
     ExecutorService pool=Executors.newCachedThreadPool();
     while (true) {
+      this.journal(); // Write JournalMs to file.
       Client client=server.accept(100);
       if (client!=null) {
         System.out.println("Server accepted connection from "+client.addresses());
@@ -318,7 +417,75 @@ System.err.println("Journal "+i.time+" cmd="+i.cmd+" key="+i.key+" data="+i.row.
     //pool.shutdown();     
   }
 
+  public boolean committed=false;
+  public void journal() {
+    long until=System.nanoTime();
+    this.committed=false;
+    Set<JMRecord> s=new TreeSet<JMRecord>();
+    for (Yahweh jah: this.jahs) {
+      LinkedList<JMRecord> l=jah.get(until);
+      if (l==null) continue;
+      for (JMRecord r: l) s.add(r);
+    }
+    for (JMRecord r: s) this.j.write(r.cmd,r.key,r.data);
+    this.committed=true;
+    s.clear();
+    if (this.j.size() > this.journalMaxSize) {
+      this.mergeJournalWithBackup();
+    }
+  }
+  ConcurrentSkipListMap<String,Table> dtables=new ConcurrentSkipListMap<String,Table>();
+  boolean backingUp=false;
+  private void mergeJournalWithBackup() {
+    this.backingUp=true;
+    this.j.close();
+    this.j=new JournalO(this.newBackupFile,false);
+    JournalI i=new JournalI(this.backupFile);
+    this.backup(i);
+    i=new JournalI(this.journalFile);
+    this.backup(i);
+    this.j.close();
+    this.backingUp=false;
+    this.dtables.clear();
+    this.j=new JournalO(this.journalFile,false);
+  }
+  private void backup(JournalI i) {
+    String tableName=null;
+    boolean writeTable=true;
+    while (i.next()) {
+      switch (i.cmd) {
+      case 'c':
+      case '+':
+        Table table=hall.getTable(a[1]);
+        if (table!=null) {
+          tableName=table.name;
+          writeTable=false;
+        } else {
+          tableName=null;
+          writeTable=false;
+        }
+        break;
+      case 'r':
+      case 'a':
+        if (tableName!=null) {
+          // Main database could be out of sync with the journal.
+          // Query the deleted/changed database first and third.
+          Table dtable=hall.getDTable(tableName);
+          String row=this.dtable.getRow(i.key);
+          if (row==null) row=this.table.getRow(i.key);
+          if (row==null) row=this.dtable.getRow(i.key);
+          if (row!=null) {
+            if (writeTable) { this.j.write('c',tableName,null); writeTable=false; }
+            this.j.write('r',i.key,row);
+          }
+        }
+        break;
+      }
+    }
+  }
+
   ConcurrentSkipListMap<String,Table> tables=new ConcurrentSkipListMap<String,Table>();
+  public Table getDTable(String name) { return this.dtables.get(name); }
   public Table getTable(String name) { return this.tables.get(name); }
   public Table newTable(String name) {
     Table n=new Table(name);
