@@ -1,1 +1,1 @@
-java -classpath obj hallelulajah/hallelulajah localhost 9001
+java -classpath obj hallelulajah/Hallelulajah localhost 9001 bd
