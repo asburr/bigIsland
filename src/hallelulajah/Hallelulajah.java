@@ -209,6 +209,10 @@ class JournalI {
   public long compare(JournalI i) {
     return this.time - i.time;
   }
+  public void close() {
+    try { this.j.close(); } catch (Exception e) { e.printStackTrace(); }
+    this.j=null;
+  }
 }
 
 class Yahweh implements Runnable {
@@ -234,13 +238,30 @@ class Yahweh implements Runnable {
       this.client.sendBuf_String("fail : Usage : "+usage+"\n");
       return false;
     }
-    int i=cmd.indexOf(',',2);
-    if (i==-1 || cmd.length()<=i+1) {
+    this.key=null;
+    this.row=null;
+    boolean escaped=false;
+    for (int j=2;j<cmd.length();j++) {
+      if (escaped) {
+        escaped=false;
+      } else {
+        if (cmd.charAt(j)=='\\') {
+          escaped=true;
+        } else {
+          if (cmd.charAt(j)==',') {
+            // Remove escaping of coma and the escape itself.
+            this.key=cmd.substring(2,j).replace("\\\\","{doubelescape}").replace("\\","").replace("{doubelescape}","\\");
+            j++;
+            if (j<cmd.length()) this.row=cmd.substring(j);
+            break;
+          }
+        }
+      }
+    }
+    if (this.key==null || this.row==null) {
       this.client.sendBuf_String("fail : usage : "+usage+"\n");
       return false;
     }
-    this.key=cmd.substring(2,i);
-    this.row=cmd.substring(i+1);
     return true;
   }
   private boolean parseKey(String cmd, String usage) {
@@ -248,7 +269,7 @@ class Yahweh implements Runnable {
       this.client.sendBuf_String("fail : Usage : "+usage+"\n");
       return false;
     }
-    this.key=cmd.substring(2);
+    this.key=cmd.substring(2).replace("\\\\","{doubelescape}").replace("\\","").replace("{doubelescape}","\\");
     return true;
   }
   private boolean parseTable(String cmd, String usage) {
@@ -407,7 +428,7 @@ class Yahweh implements Runnable {
         break;
       }
       case 'r': { // Replace row
-        this.parseKeyData(cmd,"r,<key>,<data>");
+        if (!this.parseKeyData(cmd,"r,<key>,<data>")) continue;
         if (this.table==null) {
           this.client.sendBuf_String("Fail : please connect (c) to a table\n");
           continue;
@@ -481,6 +502,31 @@ class Table {
   }
 }
 
+class Persistent implements Runnable {
+  Hallelulajah hall=null;
+  public Persistent(Hallelulajah hall) {
+    this.hall=hall;
+  }
+  public void run() {
+    long jbefore=System.currentTimeMillis();
+    long bbefore=System.currentTimeMillis()-hall.backupPeriod; // Trigger a backup.
+    if (this.hall.backupFile.exists()) bbefore=this.hall.backupFile.lastModified(); // Unless there's a backup already, then use that timestamp.
+    while (!this.hall.shutdown) {
+      long jafter=System.currentTimeMillis();
+      if ((jafter-jbefore) > 150) {
+        this.hall.journal(); // Write journals to file.
+        jbefore=jafter;
+        long bafter=System.currentTimeMillis();
+        if ((bafter-bbefore) > this.hall.backupPeriod) {
+          bbefore=bafter;
+          this.hall.mergeJournalWithBackup(); // Create a new backup file.
+        }
+      }
+      try { Thread.sleep(1000); } catch(Exception e) {}
+    }
+  }
+}
+
 public class Hallelulajah {
 
   Server server=null;
@@ -491,7 +537,9 @@ public class Hallelulajah {
   public File oldBackupFile=null;
   public File journalFile=null;
   public JournalO j=null;
-  public Hallelulajah(String host, int port, String dir) {
+  public int backupPeriod=60*60*1000;
+  public Hallelulajah(String host, int port, String dir, int backupPeriod) {
+    this.backupPeriod=backupPeriod*60*1000;
     this.server=new Server(port,100,0xffee);
     this.dir=new File(dir);
     if (!this.dir.exists()) {
@@ -530,15 +578,11 @@ public class Hallelulajah {
   }
 
   LinkedList<Yahweh> jahs=new LinkedList<Yahweh>();
+  public boolean shutdown=false;
   public void start() {
     ExecutorService pool=Executors.newCachedThreadPool();
-    long before=System.currentTimeMillis();
-    while (true) {
-      long after=System.currentTimeMillis();
-      if ((after-before) > 150) {
-        before=after;
-        this.journal(); // Write JournalMs to file.
-      }
+    pool.execute(new Persistent(this)); 
+    while (!this.shutdown) {
       Client client=server.accept(100);
       if (client!=null) {
         System.out.println("Server accepted connection from "+client.addresses());
@@ -547,7 +591,7 @@ public class Hallelulajah {
         pool.execute(jah); 
       }
     }
-    //pool.shutdown();     
+    pool.shutdown();     
   }
 
   // committed implements the save(s) command.
@@ -573,17 +617,15 @@ public class Hallelulajah {
     }
     this.jmap.forEach((k, v) -> this.listforeach(v));
     this.committed=true; // For the save(s) command.
-    if (this.j.size()>0) {
-      this.jmap.clear();
-      this.mergeJournalWithBackup();
-    }
+    this.jmap.clear();
   }
   // dtables holds original key/data pairs when backup in progress and key/data pair was changed.
   ConcurrentSkipListMap<String,Table> dtables=new ConcurrentSkipListMap<String,Table>();
   // backingUp is true when backup is in progress.
   boolean backingUp=false;
   // mergeJournalWithBackup() - creates a new backup file from the old backup and the journal file.
-  private void mergeJournalWithBackup() {
+  public void mergeJournalWithBackup() {
+    if (this.journalFile.length()==0) return; // Nothing to backup.
     this.backingUp=true;
     this.j.close();
     this.j=new JournalO(this.newBackupFile,false);
@@ -591,9 +633,11 @@ public class Hallelulajah {
     if (this.backupFile.exists()) {
       i=new JournalI(this.backupFile);
       this.backup(i);
+      i.close();
     }
     i=new JournalI(this.journalFile);
     this.backup(i);
+    i.close();
     this.j.close();
     this.backingUp=false;
     this.dtables.clear();
@@ -656,11 +700,11 @@ public class Hallelulajah {
   public boolean delTable(String name,Table table) { return this.tables.remove(name,table); }
 
   public static void main(String[] args) { try {
-    if (args.length != 3) {
-      System.out.println("Usage: <listening host> <listening port> <directory>\ni.e. localhost 9001 db_dir");
+    if (args.length != 4) {
+      System.out.println("Usage: <listening host> <listening port> <directory> <minutes in between backups>\ni.e. localhost 9001 db_dir 60");
       return;
     }
-    Hallelulajah h=new Hallelulajah(args[0],Integer.parseInt(args[1]),args[2]);
+    Hallelulajah h=new Hallelulajah(args[0],Integer.parseInt(args[1]),args[2],Integer.parseInt(args[3]));
     h.start();
   } catch(Exception e) {
     e.printStackTrace();
