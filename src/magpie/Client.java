@@ -176,9 +176,16 @@ public class Client {
       read=0;
       while (!this.shutdown) {
         try {
-          read=this.futureHdr.get(timeout,unit);
-          this.futureHdr=null;
-          break;
+          if (timeout==0) {
+            if (!this.futureHdr.isDone()) return false;
+            read=this.futureHdr.get();
+            this.futureHdr=null;
+            break;
+          } else {
+            read=this.futureHdr.get(timeout,unit);
+            this.futureHdr=null;
+            break;
+          }
         } catch(TimeoutException e) {
           return false;
         } catch(InterruptedException e) {

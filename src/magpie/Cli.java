@@ -19,32 +19,43 @@ public class Cli {
     String lastLine=null;
     String lastResp=null;
     long ld=0L;
+    long d=0L;
     while (line!=null) {
       if (line.equals("x")) return;
       if (line.startsWith("*")) {
         int count=Integer.parseInt(line.substring(2));
-        before=System.nanoTime();
+        int rcount=count;
+        before=System.currentTimeMillis();
         while (count>0) {
-          client.sendBuf_String(lastLine);
-          while (!client.read(100,TimeUnit.MILLISECONDS));
-          client.recvBuf_GetString(-1);
           count--;
+          client.sendBuf_String(lastLine);
+          while (client.read(0,TimeUnit.MILLISECONDS)) {
+            client.recvBuf_GetString(-1);
+            rcount--;
+          }
         }
-        after=System.nanoTime();
+        while (rcount>0) {
+          while (client.read(100,TimeUnit.MILLISECONDS)) {
+            client.recvBuf_GetString(-1);
+            rcount--;
+          }
+        }
+        after=System.currentTimeMillis();
+        d=(after-before);
       } else {
-        before=System.nanoTime();
+        before=System.currentTimeMillis();
         client.sendBuf_String(line);
         while (!client.read(100,TimeUnit.MILLISECONDS));
-        after=System.nanoTime();
+        after=System.currentTimeMillis();
         System.out.print(client.recvBuf_GetString(-1));
         lastLine=line;
+        d=(after-before);
+        ld=d;
       }
       if (client.shutdown) { System.out.println("Server closed"); return; }
-      long d=(after-before)/100000;
       long p=0L;
       if (ld > 0 && d > ld ) p=d/ld; else p=-(ld/d);
       System.out.print(String.format("%03d",d)+" "+p+">"); System.out.flush();
-      ld=d;
       line = reader.readLine(); 
     }
   } catch (Exception e) {
