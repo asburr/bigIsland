@@ -1,0 +1,7 @@
+FROM ubuntu
+RUN apt-get --assume-yes update \
+ && apt-get --assume-yes install iputils-ping \
+ && apt-get --assume-yes install net-tools \
+ && apt install --assume-yes iftop \
+ && apt install --assume-yes vnstat \
+ && apt install --assume-yes iproute2
