@@ -50,12 +50,12 @@
 # Change Detection is deactivated when ageoff_hour_limit is zero. And, the system clock is used when time_fields is
 # None.
 #
-from TypeSchemer import TypeSchema
+from magpie.src.mistype import MIsType
 import copy
 import difflib
 import hashlib
 import json
-from mzdatetime import MZdatetime
+from magpie.src.mzdatetime import MZdatetime
 
 
 class IncompatibleException(Exception):
@@ -98,9 +98,9 @@ class JSONSchemaDiscovery:
         return self._dumps(self.r, "")
 
     # Machine readable formatted representation.
-    def getStringRepresentation(self) -> str:
+    def getStringRepresentation(self, leaves: bool) -> str:
         lst = []
-        self._getStringRepresentation(parent="", r=self.r, rtn=lst, leaves=True)
+        self._getStringRepresentation(parent="", r=self.r, rtn=lst, leaves=leaves)
         return "\n".join(lst)
 
     def load(self, obj: any) -> None:
@@ -134,7 +134,7 @@ class JSONSchemaDiscovery:
         else:
             jtype = type(obj).__name__
             sobj = str(obj)
-            t = TypeSchema.isType(label.lower(), jtype, sobj)
+            t = MIsType.isType(label.lower(), jtype, sobj)
             if not t:
                 t = jtype
             d = {"t": t, "ts": self.ts, "v": sobj}
@@ -194,7 +194,6 @@ class JSONSchemaDiscovery:
         return nl
 
     def _caseToDict(self, c: dict) -> dict:
-        c = copy.deepcopy(c)
         d = {"t": "dict", "ts": self.ts, "v": {"R": c["R"], "O": c["O"]}}
         cs = c["S"]
         for f in cs:
@@ -202,78 +201,80 @@ class JSONSchemaDiscovery:
         return d
 
     @classmethod
-    def _dictBackToCase(cls, d: dict, oldc: dict) -> dict:
-        s = {}
-        dv = d["v"]
-        for f in oldc["S"]:
-            if f not in dv["R"]:
-                raise IncompatibleException("Dict not compatible with case " + str(oldc["S"]) + " " + str(dv["R"]))
-            s[f] = dv["R"][f]
-            del dv["R"][f]
-        if s != oldc["S"]:
-            raise IncompatibleException("Dict not compatible with case " + str(oldc["S"]) + " " + str(dv["R"]))
-        return {"S": oldc["S"], "R": dv["R"], "O": dv["O"]}
-
-    @classmethod
-    def _dictToNewCase(cls, d: dict, oldc: dict) -> dict:
-        cs = {}
-        cr = {}
-        dv = d["v"]
-        for f in oldc["S"]:
-            if f in dv["R"]:
-                cs[f] = dv["R"][f]
-        for f in d["v"]["R"]:
-            if f not in cs:
-                cr[f] = dv["R"][f]
-        if not cr and not dv["O"]:
-            raise IncompatibleException("Dict is all selected field " + str(dv) + " " + str(oldc["S"]))
-        return {"S": cs, "R": cr, "O": dv["O"]}
+    def _dictBackToCase(cls, d: dict, oldc: dict, mayReduceSelected: bool = False) -> dict:
+        dvr, dvo = (d["v"]["R"], d["v"]["O"])
+        os = oldc["S"]
+        rtn = {"S": {}, "R": {}, "O": dvo}
+        rs, rr, ro = (rtn["S"], rtn["R"], rtn["O"])
+        for f in os:
+            if f in dvr:
+                rs[f] = dvr[f]
+            elif not mayReduceSelected:
+                raise IncompatibleException("Cannot reduce selected " + str(os) + " " + str(dvr))
+        for f in dvr:
+            if f not in rs:
+                rr[f] = dvr[f]
+        if not rs:
+            raise IncompatibleException("Dict has no selected fields " + str(rtn) + " " + str(d))
+        if not rr and not ro:
+            raise IncompatibleException("Dict is all selected with no R/O fields " + str(rtn) + " " + str(d))
+        return rtn
 
     def mergeSwitchDict(self, s: dict, d: dict, level: int) -> dict:
         if self.debug:
             print(str(level) + " mergeSwitchDict")
             print(s)
             print(d)
-        sv = s["v"]
-        d = copy.deepcopy(d)
-        # First, does dict fits into any of the cases.
-        for i, c in enumerate(sv):
+        ov = s["v"]
+        rtn = {"t": "switch", "v": ov}
+        rv = rtn["v"]
+        # First, does dict fits into one of the cases.
+        for i, c in enumerate(ov):
             try:
-                cd = self._caseToDict(c)
-                nd = self.mergeDictDict(cd, d, level=level)
-                s["v"][i] = self._dictBackToCase(nd, c)
+                oc = rv[i]
+                rv[i] = self._dictBackToCase(self.mergeDictDict(self._caseToDict(c), d, level=level), c)
                 if self.debug:
                     print(str(level) + " mergeSwitchDict")
                     print(d)
-                    print(s[i])
-                return s
+                    print(oc)
+                    print(rv[i])
+                return rtn
             except IncompatibleException:
                 continue
+        oc = ov[0]  # Any old case will do.
+        ocs = oc["S"]
         # Second, generate a new case.
         try:
-            nc = self._dictToNewCase(d, s["v"][0])
+            nc = self._dictBackToCase(d, oc, mayReduceSelected=True)
         except IncompatibleException:
             raise
-        # third, a new case have less selected fields must be applied to all other cases.
-        if len(nc["S"]) < len(sv[0]["S"]):
-            caseKeys = set()
-            for c in sv:
-                caseKey = ""
-                for f, v in c["S"].items():
-                    if f in nc["S"]:
-                        caseKey += ";" + v.getStringRepresentation()
-                if caseKey in caseKeys:
-                    raise IncompatibleException("Dict missing selectors " + str(nc["S"]) + " " + str(sv[0]["S"]))
-                caseKeys.add(caseKey)
-            unselectKeys = []
-            for f in sv[0]["S"]:
-                if f not in nc["S"]:
-                    unselectKeys.append(f)
-            for c in sv:
-                for f in unselectKeys:
-                    c["R"][f] = c["S"][f]
-                    del c["S"][f]
-        s["v"].append(nc)
+        ncs = nc["S"]
+        # third, a new case with less selected fields and check if other cases can be merged.
+        if len(ncs) < len(ocs):
+            # 3.1, the smaller selector must be unique of all of the old cases.
+            ocKeys = set()  # Set to test for uniqueness.
+            for oc in ov:
+                ocKey = ""
+                ocs = oc["S"]
+                for f, v in ocs.items():
+                    if f in ncs:
+                        ocKey += ";" + v.getStringRepresentation(leaves=True)
+                if ocKey in ocKeys:  # Another case has the same key.
+                    raise IncompatibleException("Dict missing selectors " + str(nc["S"]) + " " + str(oc["S"]))
+                ocKeys.add(ocKey)
+            # 3.2, reduce the selectors in all of the old cases.
+            rv = rtn["v"] = []
+            for oc in ov:
+                c = {"S": {}, "R": copy.copy(oc["R"]), "O": oc["O"]}
+                cs = c["S"]
+                cr = c["R"]
+                for f, v in oc["S"].items():
+                    if f in ncs:
+                        cs[f] = v
+                    else:
+                        cr[f] = v
+                rv.append(c)
+        rv.append(nc)
         return s
 
     def mergeSwitchSwitch(self, s1: dict, s2: dict, level: int) -> dict:
@@ -281,31 +282,28 @@ class JSONSchemaDiscovery:
             print(str(level) + " mergeSwitchSwitch")
             print(s1)
             print(s2)
+        rtn = s2
         for c in s1["v"]:
-            cd = self._caseToDict(c)
-            self.mergeSwitchDict(s2, cd, level=level)
+            rtn = self.mergeSwitchDict(rtn, self._caseToDict(c), level=level)
         if self.debug:
             print(str(level) + " mergeSwitchSwitch")
-            print(s2)
-        return s2
+            print(rtn)
+        return rtn
 
     def mergeDictDict(self, d1: dict, d2: dict, level: int) -> dict:
         if self.debug:
             print(str(level) + " mergeDictDict")
             print(d1)
             print(d2)
-        r1 = d1["v"]["R"]
-        o1 = d1["v"]["O"]
-        r2 = d2["v"]["R"]
-        o2 = d2["v"]["O"]
+        r1, o1 = (d1["v"]["R"], d1["v"]["O"])
+        r2, o2 = (d2["v"]["R"], d2["v"]["O"])
         newd = {"t": "dict", "ts": self.ts, "v": {"R": {}, "O": {}}}
-        newr = newd["v"]["R"]
-        newo = newd["v"]["O"]
+        newr, newo = (newd["v"]["R"], newd["v"]["O"])
         for f1 in r1:
             if f1 in r2:
                 newr[f1] = self.merge(r1[f1], r2[f1], level=level + 1)
             elif f1 in o2:
-                newo[f1] = self.merge(r1[f1], r2[f1], level=level + 1)
+                newo[f1] = self.merge(r1[f1], o2[f1], level=level + 1)
             else:
                 newo[f1] = r1[f1]
         for f1 in o1:
@@ -319,7 +317,7 @@ class JSONSchemaDiscovery:
             if f2 not in r1 and f2 not in o1:
                 newo[f2] = r2[f2]
         for f2 in o2:
-            if f2 not in r1 and f2 not in o2:
+            if f2 not in r1 and f2 not in o1:
                 newo[f2] = o2[f2]
         if self.debug:
             print(str(level) + " mergeDictDict")
@@ -332,10 +330,9 @@ class JSONSchemaDiscovery:
             print(str(level) + " mergeDictDictToSwitch")
             print(d1)
             print(d2)
-        r1 = d1["v"]["R"]
-        o1 = d1["v"]["O"]
-        r2 = d2["v"]["R"]
-        o2 = d2["v"]["O"]
+        r1, o1 = (d1["v"]["R"], d1["v"]["O"])
+        r2, o2 = (d2["v"]["R"], d2["v"]["O"])
+        # First, find fields that are in both dict to select the cases.
         newS = {}
         for f1 in r1:
             if f1 in r2:
@@ -347,28 +344,26 @@ class JSONSchemaDiscovery:
             raise IncompatibleException("No common fields to select on")
         field_same_value = []
         for f in newS:
-            if r1[f].getStringRepresentation() != r2[f].getStringRepresentation():
+            if r1[f].getStringRepresentation(leaves=True) == r2[f].getStringRepresentation(leaves=True):
                 field_same_value.append(f)
         for f in field_same_value:
             del newS[f]
         if not newS:
             raise IncompatibleException("Nothing to switch on. Common fields have the same values.")
-        new = {"t": "switch", "ts": self.ts, "v": []}
-        newc1 = {"S": {}}
-        newr1 = copy.copy(r1)
-        new["v"].append(newc1)
-        newc2 = {"S": {}}
-        newr2 = copy.copy(r2)
-        new["v"].append(newc2)
+        new = {"t": "switch", "ts": self.ts, "v": [
+            {"S": {}, "R": {}, "O": o1},
+            {"S": {}, "R": {}, "O": o2}
+        ]}
+        newv = new["v"]
         for f in newS:
-            newc1["S"][f] = newr1[f]
-            del newr1[f]
-            newc2["S"][f] = newr2[f]
-            del newr2[f]
-        newc1["R"] = newr1
-        newc1["O"] = o1
-        newc2["R"] = newr2
-        newc2["O"] = o2
+            newv[0][f] = r1[f]
+            newv[1][f] = r2[f]
+        for f, v in r1.items():
+            if f not in newS:
+                newv[0]["R"][f] = v
+        for f, v in r2.items():
+            if f not in newS:
+                newv[1]["R"][f] = v
         if self.debug:
             print(str(level) + " mergeDictDictToSwitch")
             print(new)
@@ -488,23 +483,23 @@ class JSONSchemaDiscovery:
         if t == "list":
             if r["ts"] < self.ts:
                 return True
-            return self._ageOff(parent=parent+".list", r=v, rtn=rtn)
+            return self._ageOff(parent=parent + ".list", r=v, rtn=rtn)
         if t == "dict":
             if r["ts"] < self.ts:
                 return True
             lst = []
             for f in v["R"]:
-                if self._ageOff(parent=parent+".dict.R", r=v["R"][f], rtn=rtn):
+                if self._ageOff(parent=parent + ".dict.R", r=v["R"][f], rtn=rtn):
                     lst.append(f)
             for f in lst:
-                self._getStringRepresentation(parent=parent+".dict.R", r=v["R"][f], rtn=rtn, leaves=True, values=True)
+                self._getStringRepresentation(parent=parent + ".dict.R", r=v["R"][f], rtn=rtn, leaves=True, values=True)
                 del v["R"][f]
             lst = []
             for f in v["O"]:
-                if self._ageOff(parent=parent+".dict.O", r=v["O"][f], rtn=rtn):
+                if self._ageOff(parent=parent + ".dict.O", r=v["O"][f], rtn=rtn):
                     lst.append(f)
             for f in lst:
-                self._getStringRepresentation(parent=parent+".dict.O", r=v["O"][f], rtn=rtn, leaves=True, values=True)
+                self._getStringRepresentation(parent=parent + ".dict.O", r=v["O"][f], rtn=rtn, leaves=True, values=True)
                 del v["O"][f]
             return False
         if t == "switch":
@@ -513,10 +508,10 @@ class JSONSchemaDiscovery:
             for c in v:
                 lst = []
                 for f in c["S"]:
-                    if self._ageOff(parent=parent+"switch.S", r=c["S"][f], rtn=rtn):
+                    if self._ageOff(parent=parent + "switch.S", r=c["S"][f], rtn=rtn):
                         lst.append(f)
                 for f in lst:
-                    self._getStringRepresentation(parent=parent+"switch.S", r=c["S"][f], rtn=rtn,
+                    self._getStringRepresentation(parent=parent + "switch.S", r=c["S"][f], rtn=rtn,
                                                   leaves=True, values=True)
                     del c["S"][f]
                     raise Exception("Aging odd selected fields, must rebuild the switch")
@@ -524,19 +519,19 @@ class JSONSchemaDiscovery:
                 if c["R"]:
                     lst = []
                     for f in c["R"]:
-                        if self._ageOff(parent=parent+"switch.R", r=c["R"][f], rtn=rtn):
+                        if self._ageOff(parent=parent + "switch.R", r=c["R"][f], rtn=rtn):
                             lst.append(f)
                     for f in lst:
-                        self._getStringRepresentation(parent=parent+"switch.R", r=c["R"][f],
+                        self._getStringRepresentation(parent=parent + "switch.R", r=c["R"][f],
                                                       rtn=rtn, leaves=True, values=True)
                         del c["R"][f]
                 if c["O"]:
                     lst = []
                     for f in c["O"]:
-                        if self._ageOff(parent=parent+"switch.O", r=c["O"][f], rtn=rtn):
+                        if self._ageOff(parent=parent + "switch.O", r=c["O"][f], rtn=rtn):
                             lst.append(f)
                     for f in lst:
-                        self._getStringRepresentation(parent=parent+"switch.O", r=c["O"][f],
+                        self._getStringRepresentation(parent=parent + "switch.O", r=c["O"][f],
                                                       rtn=rtn, leaves=True, values=True)
                         del c["O"][f]
             return False
@@ -596,7 +591,7 @@ class JSONSchemaDiscovery:
         print("**load**" + str(d))
         js.load(d)
         print(js.dumps())
-        print(js.getStringRepresentation())
+        print(js.getStringRepresentation(leaves=True))
         js = JSONSchemaDiscovery(debug=False)
         js.load({"k": 1, "sk": 11, "f": "A"})
         print(js.r)
