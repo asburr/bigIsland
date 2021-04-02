@@ -4,7 +4,7 @@
 import ipaddress
 # import uuid
 import re
-from mzdatetime import MZdatetime
+from magpie.src.mzdatetime import MZdatetime
 
 
 class MIsType:

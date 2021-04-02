@@ -2,8 +2,8 @@
 from time import sleep
 import threading
 import logging
-from magpie.mlogger import MLogger
-from magpie.mzdatetime import MZdatetime
+from magpie.src.mlogger import MLogger
+from magpie.src.mzdatetime import MZdatetime
 import traceback
 
 
