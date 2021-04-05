@@ -1,5 +1,23 @@
 #!/usr/bin/env python3
 # Id the type from a string.
+# Catastrophic Backtracking in regex:
+#
+# Complicated expressions are avoided to reduce the possibility of catastrophic backtracking
+# [http://www.regular-expressions.info/catastrophic.html]. This is somewhat obvious in a simple expression, for
+# example, the pattern "(\w+)\*([\w\s]+)*/$" has a mistake in the second capture group, "([\w\s]+)*" should be
+# "([\w\s]+)", and the nested qualifiers of "*" and "*" causes catastrophic backtracking. The nested qualifiers
+# has the expression trying all permutations of the string and with very long strings these permutations will take
+# days to compute.
+#
+# Example of catastrophic backtracking,
+# python3 -mtimeit -n 1 -r 1 -s'import re' 'p = re.compile("(\w+)\*([\w\s]+)*/$")' 'm = p.match("1*12345678910")'
+# 1 loops, best of 1: 324 usec per loop
+# Example of catastrophic backtracking with a longer string to show the matching gets slower due to backtracking,
+# python3 -mtimeit -n 1 -r 1 -s'import re' 'p = re.compile("(\w+)\*([\w\s]+)*/$")' 'm = p.match("1*1234567891012345678912345")'
+# 1 loops, best of 1: 1.78 sec per loop
+# Example without catastrophic backtracking with the long string to show performance without backtracking,
+# python3 -mtimeit -n 1 -r 1 -s'import re' 'p = re.compile("(\w+)\*([\w\s]+)/$")' 'm = p.match("1*1234567891012345678912345")'
+# 1 loops, best of 1: 221 usec per loop
 #
 import ipaddress
 # import uuid
@@ -40,7 +58,23 @@ class MIsType:
     # arn:partition:service:region:account-id:resource-id
     # arn:partition:service:region:account-id:resource-type/resource-id
     # arn:partition:service:region:account-id:resource-type:resource-id
-    ARNPat = re.compile("^arn(:[^:/\s]*){4}:[^:/\s]*(/[^/\s]+)*$", re.IGNORECASE)
+    ARNPat = re.compile(
+        # Starts with arn
+        "^arn:"
+        # partition
+        "([^:\s]*):"
+        # service
+        "([^:\s]*):"
+        # region
+        "([^:\s]*):"
+        # account-id
+        "([^:\s]*):"
+        # resouce-type is optional
+        "(?:([^:/\s]*)[:/])?"
+        # Resource id
+        "([^/:\s]+)$",
+        re.IGNORECASE
+    )
 
     @classmethod
     def isARN(cls, label: str, json_type: str, value: str) -> str:
@@ -61,7 +95,25 @@ class MIsType:
             yield test
 
     # User Agent.
-    UAPat = re.compile("^([^\s/()]+?/\s?[\d\a-_.]+(\s[(][^()]*[)])?\s?)+$", re.IGNORECASE)
+    # product/version (system and browser information) {repeated}
+    UAPat = re.compile(
+        "^"
+        # Product
+        "[^\s/()]+\s?"
+        # version
+        "/\s?[\da-z-_.]+"
+        # (system and browser information) is optional
+        "(?:\s[(][^)]+[)]\s?)?"
+        # Additional products
+        "(?:"
+        "\s[^\s/()]+\s?"
+        # additional products have optional version
+        "(?:/\s?[\da-z-_.]+)?"
+        # (system and browser information) is optional
+        "(?:\s[(][^)]+[)]\s?)?"
+        ")*"
+        "$",
+        re.IGNORECASE)
 
     @classmethod
     def isUA(cls, label: str, json_type: str, value: str) -> str:
@@ -81,10 +133,13 @@ class MIsType:
         ]:
             yield test
 
-    # Email
-    # userid chars are: [a-z0-9_.-], [_.-] must be followed by one or more [a-z0-9].
+    # Email: userid@(domain|ip)
     emailPat = re.compile(
-        "^[A-Z0-9]([_.-][A-Z0-9]|[A-Z0-9])*@(.*)$",
+        # user id
+        # starts with [a-z0-9] and [_.-] must be followed by one or more [a-z0-9].
+        "^([A-Z0-9](?:[_.-][A-Z0-9]|[A-Z0-9])*)@"
+        # Domain or ip
+        "(.*)$",
         re.IGNORECASE)
 
     @classmethod
@@ -177,19 +232,39 @@ class MIsType:
         ]:
             yield test
 
-    # URL
-    # protocol://domainOrIPAddress:port/path/filename
+    # URL: protocol://(domain|IPAddress):port/path(#anchor|?param)
+    # param: (key=value)key2=value2
     URLPat = re.compile(
-        "^(?:(file|ftp|http(s)?):[/][/])?[\w. -]+(?:[.][\w.-]+)+[\w\-._~:/?#\[\]@!\$&'()*+,;=]+$",
+        # Notes on the regex syntax:
+        # (?:...) non-capture group.
+        # ()? optional group.
+        # Protocol.
+        "^(?:(.{4,})://)?"
+        # Domain or ip
+        "([^:/]{4,})"
+        # port
+        "(?::([0-9]+))?"
+        # path
+        "/([^#?]+)"
+        # parameter, one capture for all params
+        "((?:[?][^?#]+)*)"
+        # anchor, one capture for all anchors.
+        "((?:#[^?#]+)*)",
         re.IGNORECASE)
 
     @classmethod
     def isURL(cls, label: str, json_type: str, value: str) -> str:
         if json_type != "str":
             return ""
-        if cls.URLPat.match(value):
-            return "url"
-        return ""
+        m = cls.URLPat.match(value)
+        if not m:
+            return ""
+        g = m.groups()
+        if g[0] not in [None, "file", "https", "http", "mailto"]:
+            return ""
+        if not cls.isDomain("host", "str", g[1]) and not cls.isIP("", "str", g[1]):
+            return ""
+        return "url"
 
     @staticmethod
     def testURL():
