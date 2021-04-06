@@ -50,11 +50,13 @@
 # Change Detection is deactivated when ageoff_hour_limit is zero. And, the system clock is used when time_fields is
 # None.
 #
-from magpie.src.mistype import MIsType
 import copy
+import argparse
 import difflib
 import hashlib
 import json
+import traceback
+from magpie.src.mistype import MIsType
 from magpie.src.mzdatetime import MZdatetime
 
 
@@ -63,7 +65,6 @@ class IncompatibleException(Exception):
 
 
 class JSONSchemaDiscovery:
-    numericTypes = ["int", "float", "num"]
 
     def __init__(self, debug: bool = False, ageoff_hour_limit: int = 0, time_fields: list = None):
         self.debug = debug
@@ -98,9 +99,9 @@ class JSONSchemaDiscovery:
         return self._dumps(self.r, "")
 
     # Machine readable formatted representation.
-    def getStringRepresentation(self, leaves: bool) -> str:
+    def getStringRepresentation(self, leaves: bool, values: bool, counts: bool) -> str:
         lst = []
-        self._getStringRepresentation(parent="", r=self.r, rtn=lst, leaves=leaves)
+        self._getStringRepresentation(parent="", r=self.r, rtn=lst, leaves=leaves, values=values, counts=counts)
         return "\n".join(lst)
 
     def load(self, obj: any) -> None:
@@ -113,37 +114,67 @@ class JSONSchemaDiscovery:
 
     def _load(self, label: str, obj: any) -> dict:
         if isinstance(obj, dict):
+            lst = list(obj.keys())
+            wiresharkSummaryFields = True
+            for field in lst:
+                if ": " not in field or not isinstance(obj[field], dict):
+                    wiresharkSummaryFields = False
+            if wiresharkSummaryFields:
+                if self.debug:
+                    print("load wireshark dict " + str(obj))
+                try:
+                    f = None
+                    for field in lst:
+                        v = obj[field]
+                        v["__ws_summary"] = field
+                        o = self._load(label, v)
+                        if f is None:
+                            f = o
+                        else:
+                            f = self.merge(o1=f, o2=o, level=1)
+                    return {"t": "list", "ts": self.ts, "c": 1, "v": f}
+                except IncompatibleException:
+                    traceback.print_exc()
+                    pass
             d = {}
-            for field in obj.keys():
+            for field in lst:
+                if self.debug:
+                    print("load dict " + field + " " + str(obj[field]))
                 d[field] = self._load(field, obj[field])
             if d:
-                return {"t": "dict", "ts": self.ts, "v": {"R": d, "O": {}}}
+                return {"t": "dict", "ts": self.ts, "c": 1, "v": {"R": d, "O": {}}}
             else:
-                return {"t": "dict", "ts": self.ts, "v": {"R": {}, "O": {}}}
+                return {"t": "dict", "ts": self.ts, "c": 1, "v": {"R": {}, "O": {}}}
         elif isinstance(obj, list):
-            c = 0
             f = None
+            cnt = 0
             for v in obj:
-                c += 1
+                if self.debug:
+                    print("load list element: " + str(v))
+                if not label:
+                    cnt += 1
+                    print(cnt)
+                    if cnt == 678:
+                        print(json.dumps(v))
                 o = self._load(label, v)
                 if f is None:
                     f = o
                 else:
                     f = self.merge(o1=f, o2=o, level=1)
-            return {"t": "list", "ts": self.ts, "v": f}
+            return {"t": "list", "ts": self.ts, "c": 1, "v": f}
         else:
+            if self.debug:
+                print("load value: " + str(obj))
             jtype = type(obj).__name__
             sobj = str(obj)
             t = MIsType.isType(label.lower(), jtype, sobj)
             if not t:
                 t = jtype
-            d = {"t": t, "ts": self.ts, "v": sobj}
+            d = {"t": t, "ts": self.ts, "c": 1, "v": sobj}
             return d
 
-    # Merge o2 into o1.
-    # o2 and o1 may be re-used when creating the merge. clone o1 and o2 using copy.deepcopy() when there is
-    # a need to retain their value.
-    def merge(self, o1: dict, o2: dict, level: int = False) -> dict:
+    # Merge o2 and o1 to create a new representation.
+    def merge(self, o1: dict, o2: dict, level: int = 0) -> dict:
         t1 = o1["t"]
         t2 = o2["t"]
         if t1 == "switch":
@@ -161,6 +192,8 @@ class JSONSchemaDiscovery:
                 try:
                     return self.mergeDictDict(o1, o2, level=level)
                 except IncompatibleException:
+                    if self.debug:
+                        traceback.print_exc()
                     pass
                 return self.mergeDictDictToSwitch(o1, o2, level=level)
             if t2 == "list":
@@ -185,8 +218,8 @@ class JSONSchemaDiscovery:
             print(l1)
             print(l2)
         nl = {
-            "t": "list", "ts": self.ts,
-            "v": self.mergeValueValue(l1["v"], l2["v"], level=level)
+            "t": "list", "ts": self.ts, "c": l1["c"] + l2["c"],
+            "v": self.merge(l1["v"], l2["v"], level=level)
         }
         if self.debug:
             print(str(level) + " mergeListList")
@@ -194,7 +227,7 @@ class JSONSchemaDiscovery:
         return nl
 
     def _caseToDict(self, c: dict) -> dict:
-        d = {"t": "dict", "ts": self.ts, "v": {"R": c["R"], "O": c["O"]}}
+        d = {"t": "dict", "ts": self.ts, "c": c["c"], "v": {"R": c["R"], "O": c["O"]}}
         cs = c["S"]
         for f in cs:
             d["v"]["R"][f] = cs[f]
@@ -204,7 +237,7 @@ class JSONSchemaDiscovery:
     def _dictBackToCase(cls, d: dict, oldc: dict, mayReduceSelected: bool = False) -> dict:
         dvr, dvo = (d["v"]["R"], d["v"]["O"])
         os = oldc["S"]
-        rtn = {"S": {}, "R": {}, "O": dvo}
+        rtn = {"S": {}, "ts": d["ts"], "c": d["c"], "R": {}, "O": dvo}
         rs, rr, ro = (rtn["S"], rtn["R"], rtn["O"])
         for f in os:
             if f in dvr:
@@ -226,7 +259,7 @@ class JSONSchemaDiscovery:
             print(s)
             print(d)
         ov = s["v"]
-        rtn = {"t": "switch", "v": ov}
+        rtn = {"t": "switch", "ts": self.ts, "c": s["c"] + d["c"], "v": ov}
         rv = rtn["v"]
         # First, does dict fits into one of the cases.
         for i, c in enumerate(ov):
@@ -249,6 +282,8 @@ class JSONSchemaDiscovery:
         except IncompatibleException:
             raise
         ncs = nc["S"]
+        if not ncs:
+            raise Exception("Empty select")
         # third, a new case with less selected fields and check if other cases can be merged.
         if len(ncs) < len(ocs):
             # 3.1, the smaller selector must be unique of all of the old cases.
@@ -258,14 +293,14 @@ class JSONSchemaDiscovery:
                 ocs = oc["S"]
                 for f, v in ocs.items():
                     if f in ncs:
-                        ocKey += ";" + v.getStringRepresentation(leaves=True)
+                        ocKey += ";" + v.getStringRepresentation(leaves=True, values=True, counts=False)
                 if ocKey in ocKeys:  # Another case has the same key.
                     raise IncompatibleException("Dict missing selectors " + str(nc["S"]) + " " + str(oc["S"]))
                 ocKeys.add(ocKey)
             # 3.2, reduce the selectors in all of the old cases.
             rv = rtn["v"] = []
             for oc in ov:
-                c = {"S": {}, "R": copy.copy(oc["R"]), "O": oc["O"]}
+                c = {"S": {}, "ts": oc["ts"], "c": oc["c"], "R": copy.copy(oc["R"]), "O": oc["O"]}
                 cs = c["S"]
                 cr = c["R"]
                 for f, v in oc["S"].items():
@@ -273,6 +308,8 @@ class JSONSchemaDiscovery:
                         cs[f] = v
                     else:
                         cr[f] = v
+                if not cs:
+                    raise Exception("Empty selected")
                 rv.append(c)
         rv.append(nc)
         return s
@@ -297,7 +334,7 @@ class JSONSchemaDiscovery:
             print(d2)
         r1, o1 = (d1["v"]["R"], d1["v"]["O"])
         r2, o2 = (d2["v"]["R"], d2["v"]["O"])
-        newd = {"t": "dict", "ts": self.ts, "v": {"R": {}, "O": {}}}
+        newd = {"t": "dict", "ts": self.ts, "c": d1["c"] + d2["c"], "v": {"R": {}, "O": {}}}
         newr, newo = (newd["v"]["R"], newd["v"]["O"])
         for f1 in r1:
             if f1 in r2:
@@ -344,20 +381,23 @@ class JSONSchemaDiscovery:
             raise IncompatibleException("No common fields to select on")
         field_same_value = []
         for f in newS:
-            if r1[f].getStringRepresentation(leaves=True) == r2[f].getStringRepresentation(leaves=True):
+            if (
+                    self._getStringRepresentations(r=r1[f], leaves=True, values=True, counts=False) ==
+                    self._getStringRepresentations(r=r2[f], leaves=True, values=True, counts=False)
+            ):
                 field_same_value.append(f)
         for f in field_same_value:
             del newS[f]
         if not newS:
             raise IncompatibleException("Nothing to switch on. Common fields have the same values.")
-        new = {"t": "switch", "ts": self.ts, "v": [
-            {"S": {}, "R": {}, "O": o1},
-            {"S": {}, "R": {}, "O": o2}
+        new = {"t": "switch", "ts": self.ts, "c": d1["c"] + d2["c"], "v": [
+            {"S": {}, "ts": d1["ts"], "c": d1["c"], "R": {}, "O": o1},
+            {"S": {}, "ts": d2["ts"], "c": d2["c"], "R": {}, "O": o2}
         ]}
         newv = new["v"]
         for f in newS:
-            newv[0][f] = r1[f]
-            newv[1][f] = r2[f]
+            newv[0]["S"][f] = r1[f]
+            newv[1]["S"][f] = r2[f]
         for f, v in r1.items():
             if f not in newS:
                 newv[0]["R"][f] = v
@@ -376,10 +416,18 @@ class JSONSchemaDiscovery:
         raise IncompatibleException("mergeSwitchValue need field name to merge into switch " + str(s) + " value " +
                                     str(v))
 
+    # Machine readable formatted representation.
+    def _getStringRepresentations(self, r: dict,
+                                  leaves: bool = True, values: bool = False, counts: bool = False) -> str:
+        lst = []
+        self._getStringRepresentation(parent="", r=r, rtn=lst, leaves=leaves, values=values, counts=counts)
+        return "\n".join(lst)
+
     # Generate a string representation of the structure in "r". For t="switch" it generated the same representation
     # as though it were a t="dict".
     @classmethod
-    def _getStringRepresentation(cls, parent: str, r: dict, rtn: list, leaves: bool = True, values: bool = False):
+    def _getStringRepresentation(cls, parent: str, r: dict, rtn: list,
+                                 leaves: bool = True, values: bool = False, counts: bool = False):
         t = r["t"]
         v = r["v"]
         if not v:
@@ -388,31 +436,47 @@ class JSONSchemaDiscovery:
             fields = {}
             for c in v:
                 for xn, x in c.items():  # O, R, and S
+                    if xn in ["ts", "c"]:
+                        continue
                     if xn == "S":
                         xn = "R"
                     for fn, f in x.items():
                         fields[parent + "." + xn + "." + fn] = f
             for n, v in sorted(fields.items()):
-                cls._getStringRepresentation(n, v, rtn=rtn, leaves=leaves)
+                cls._getStringRepresentation(n, v, rtn=rtn, leaves=leaves, values=values, counts=counts)
+            return
         if t == "dict":
             for xn, x in sorted(v.items()):  # O and R
                 for fn, f in sorted(x.items()):
-                    cls._getStringRepresentation(parent + "." + xn + "." + fn, f, rtn=rtn, leaves=leaves)
+                    cls._getStringRepresentation(parent + "." + xn + "." + fn, f, rtn=rtn,
+                                                 leaves=leaves, values=values, counts=counts)
+            return
         if t == "list":
-            cls._getStringRepresentation(parent + ".list.", v, rtn=rtn, leaves=leaves)
+            cls._getStringRepresentation(parent + ".list.", v, rtn=rtn,
+                                         leaves=leaves, values=values, counts=counts)
+            return
         if not leaves:
             rtn.append(parent)
-        # TODO: All types should have a comparable domain like num:int, num:float; and, host:ip, host:domain.
-        # Then here the comparable part of the type is used.
-        if t in ["int", "float", "num"]:
-            t = "num"
-        if ":" in t:
-            t = t[:t.index(":")]
-        if t in ["ip", "domain"]:
-            t = "host"
+        t = cls.mainType(t)
         if values:
-            rtn.append(parent + "." + t + "=" + v)
-        rtn.append(parent + "." + t)
+            v = str(v).replace("\n", "\\n")
+            c = ""
+            if counts:
+                c = "{" + str(r["c"]) + "}"
+            v = "[1]" + c + "=" + v
+            rtn.append(parent + "." + t + v)
+            if "v2" in r:
+                v = str(r["v2"]).replace("\n", "\\n")
+                c = ""
+                if counts:
+                    c = "{" + str(r["c"]) + "}"
+                v = "[2]" + c + ")=" + v
+                rtn.append(parent + "." + t + v)
+        else:
+            if counts:
+                rtn.append(parent + "." + t + "{" + r["c"] + "}")
+            else:
+                rtn.append(parent + "." + t)
 
     # Walks the representation putting the structure and leaf values into the returned string.
     @classmethod
@@ -423,16 +487,16 @@ class JSONSchemaDiscovery:
         if "an" in t:
             rtn += "optional "
         if t == "list":
-            rtn += "list:\n"
+            rtn += "list [" + str(r["ts"]) + "] {" + str(r["c"]) + "}:\n"
             indent += "    "
             return rtn + cls._dumps(v, indent)
         if t == "dict":
-            rtn += "dict:\n"
+            rtn += "dict [" + str(r["ts"]) + "] {" + str(r["c"]) + "}:\n"
             indent += "    "
-            for f in v["R"]:
+            for f in sorted(v["R"].keys()):
                 rtn += indent + "'" + f + "'" + " (required):\n"
                 rtn += cls._dumps(v["R"][f], indent + "    ")
-            for f in v["O"]:
+            for f in sorted(v["O"].keys()):
                 rtn += indent + "'" + f + "'" + " (optional):\n"
                 rtn += cls._dumps(v["O"][f], indent + "    ")
             return rtn
@@ -445,30 +509,30 @@ class JSONSchemaDiscovery:
                     cls._getStringRepresentation(parent=f + "=", r=cs[f], rtn=lst, leaves=True, values=True)
                 cn = hashlib.shake_128(";".join(lst).encode()).hexdigest(1)
                 cases[cn] = c
-            rtn += "switch:\n"
+            rtn += "switch [" + str(r["ts"]) + "] {" + str(r["c"]) + "}:\n"
             indent += "    "
             for n, c in sorted(cases.items()):
                 rtn += indent + "case:" + n + "\n"
                 rtn += indent + "S:" + "\n"
-                for f in c["S"]:
+                for f in sorted(c["S"].keys()):
                     rtn += indent + "    " + f + "\n"
                     rtn += cls._dumps(c["S"][f], indent + "    ")
                 if c["R"]:
                     rtn += indent + "R:" + "\n"
-                    for f in c["R"]:
+                    for f in sorted(c["R"].keys()):
                         rtn += indent + "    " + f + "\n"
                         rtn += cls._dumps(c["R"][f], indent + "    ")
                 if c["O"]:
                     rtn += indent + "O:" + "\n"
-                    for f in c["O"]:
+                    for f in sorted(c["O"].keys()):
                         rtn += indent + "    " + f + "\n"
                         rtn += cls._dumps(c["O"][f], indent + "    ")
             return rtn
         if "v2" in r:
-            return rtn + t + "=[" + v + "," + r["v2"] + "]\n"
-        return rtn + t + "=" + str(v) + "\n"
+            return rtn + t + "[" + str(r["ts"]) + "]{" + str(r["c"]) + "}=[" + v + "," + r["v2"] + "]\n"
+        return rtn + t + "[" + str(r["ts"]) + "]{" + str(r["c"]) + "}=" + str(v) + "\n"
 
-    # Returna list of fields that have aged off.
+    # Return a list of fields that have aged off.
     def ageOff(self) -> list:
         rtn = []
         self.ts = self.mzdatetime.timestamp() - (self.ageoff_hour_limit * 60)
@@ -540,8 +604,31 @@ class JSONSchemaDiscovery:
     @classmethod
     def mainType(cls, t: str) -> str:
         if ":" in t:
-            return t[t.index(":") + 1:]
+            t = t[:t.index(":")]
+        if t in ["int", "float", "num"]:
+            return "num"
+        if t in ["ip", "domain"]:
+            return "host"
         return t
+
+    @classmethod
+    def areTypesTheSame(cls, t1: str, t2: str) -> (bool, str):
+        if t1 == t2:
+            return True, t1
+        nt1 = t1
+        nt2 = t2
+        # i.e. ip:private == ip:public
+        if ":" in t1:
+            nt1 = t1[:t1.index(":")]
+        if ":" in t2:
+            nt2 = t2[:t2.index(":")]
+        if nt1 == nt2:
+            return True, nt1
+        if nt1 in ["int", "float", "num"] and nt2 in ["int", "float", "num"]:
+            return True, "num"
+        if nt1 in ["ip", "domain"] and t2 in ["ip", "domain"]:
+            return True, "host"
+        return False, ""
 
     def mergeValueValue(self, v1: dict, v2: dict, level: int) -> dict:
         if self.debug:
@@ -552,27 +639,27 @@ class JSONSchemaDiscovery:
         newv["t"] = t1 = v1["t"]
         t2 = v2["t"]
         if t1 != t2:
-            newv["t"] = t1 = self.mainType(v1["t"])
-            t2 = self.mainType(v2["t"])
-            if t1 != t2:
+            same, newv["t"] = self.areTypesTheSame(t1, t2)
+            if not same:
                 raise IncompatibleException("mergeValueValue " + t1 + " " + t2)
         newv["v"] = v1["v"]
         if "v2" in v1:
             newv["v2"] = v1["v2"]
         else:
-            if newv["v"] != v1["v"]:
-                if newv["v"] < v2["v"]:
-                    newv["v2"] = v2["v"]
-                else:
-                    newv["v2"] = newv["v"]
-                    newv["v"] = v2["v"]
-            elif "v2" in v2 and v2["v2"] != newv["v"]:
-                if newv["v"] < v2["v2"]:
-                    newv["v2"] = v2["v2"]
-                else:
-                    newv["v2"] = newv["v"]
-                    newv["v"] = v2["v2"]
+            lst = [v2["v"]]
+            if "v2" in v2:
+                lst.append(v2["v2"])
+            for v in lst:
+                if newv["v"] != v:
+                    if newv["v"] < v:
+                        newv["v2"] = v
+                    else:
+                        newv["v2"] = newv["v"]
+                        newv["v"] = v
+                    break
         newv["an"] = ("an" in v2 or "an" in v1)
+        newv["ts"] = self.ts
+        newv["c"] = v1["c"] + v2["c"]
         if self.debug:
             print(str(level) + " mergeValueValue")
             print(newv)
@@ -580,7 +667,21 @@ class JSONSchemaDiscovery:
 
     @staticmethod
     def main():
-        js = JSONSchemaDiscovery(debug=False)
+        parser = argparse.ArgumentParser(description="Sheet")
+        parser.add_argument('-d', '--debug', help="activate debugging", action="store_true")
+        parser.add_argument('-i', '--input', help="input file(s) coma separated, default is to run the testcases")
+        args = parser.parse_args()
+        js = JSONSchemaDiscovery(debug=args.debug)
+        if args.input:
+            for fn in args.input.split(","):
+                if args.debug:
+                    print("Loading " + fn)
+                with open(fn, "r") as fp:
+                    js.load(json.load(fp))
+            print(js.dumps())
+            # print(json.dumps(js.r, indent=4))
+            # print(js.getStringRepresentation(leaves=True, values=True, counts=True))
+            return
         d = {"h": 1, "f": [2, 3, 4], "g": "a", "j": {"f": 5}}
         print("**load** " + str(d))
         js.load(d)
@@ -591,7 +692,7 @@ class JSONSchemaDiscovery:
         print("**load**" + str(d))
         js.load(d)
         print(js.dumps())
-        print(js.getStringRepresentation(leaves=True))
+        print(js.getStringRepresentation(leaves=True, values=True, counts=True))
         js = JSONSchemaDiscovery(debug=False)
         js.load({"k": 1, "sk": 11, "f": "A"})
         print(js.r)
