@@ -20,6 +20,7 @@
 # 1 loops, best of 1: 221 usec per loop
 #
 import ipaddress
+from ipaddress import IPv4Address
 # import uuid
 import re
 from magpie.src.mzdatetime import MZdatetime
@@ -171,13 +172,17 @@ class MIsType:
 
     # IPaddress
     @classmethod
-    def isIP(cls, label: str, json_type: str, value: str) -> str:
+    def isIP(cls, _label: str, json_type: str, value: str) -> str:
         if json_type != "str":
             return ""
         if value.count(".") == 3 or value.count(":") > 1:
             try:
                 ip = ipaddress.ip_address(value)
                 iptype = "ip"
+                if isinstance(ip, IPv4Address):
+                    iptype += ":v4"
+                else:
+                    iptype += ":v6"
                 if ip.is_multicast:
                     return iptype + ":multicast"
                 if ip.is_private:
@@ -210,6 +215,16 @@ class MIsType:
     @classmethod
     def isTimestamp(cls, label: str, json_type: str, value: str) -> str:
         if "time" in label:
+            if json_type == "str":
+                try:
+                    float(value)
+                    try:
+                        int(value)
+                        return "timestamp:epoch(int)"
+                    except Exception:
+                        return "timestamp:epoch(float)"
+                except Exception:
+                    return ""
             if json_type == "float":
                 return "timestamp:epoch(float)"
             if json_type == "int":
@@ -293,6 +308,31 @@ class MIsType:
         ]:
             yield test
 
+    MACPat = re.compile(
+        # Colon-Hexadecimal notation is used by Linux OS.
+        # Period-separated Hexadecimal notation is used by Cisco Systems
+        # Organizational Unique Identifier (Manufacturer)
+        "^([0-9A-F]{2}[:.][0-9A-F]{2}[:.][0-9A-F]{2})[:.]"
+        # Network Interface Controller
+        "([0-9A-F]{2}[:.][0-9A-F]{2}[:.][0-9A-F]{2})$",
+        re.IGNORECASE)
+
+    @classmethod
+    def isMAC(cls, label: str, json_type: str, value: str) -> str:
+        if json_type != "str":
+            return ""
+        if cls.MACPat.match(value):
+            return "mac"
+        return ""
+
+    @staticmethod
+    def testMAC():
+        for test in [
+            (MIsType.isMAC, "", "str", "00-1B-77-49-54-FD", "mac"),
+            (MIsType.isMAC, "", "str", "00 1B 77 49 54 FD", "mac")
+        ]:
+            yield test
+
     # UUID LLLL-M-M-H-HRLDDDDD
     # 0-3: L time_low, The low field of the timestamp
     # 4-5: M time_mid, The middle field of the timestamp
@@ -368,25 +408,27 @@ class MIsType:
     @classmethod
     def isType(cls, label: str, json_type: str, value: str) -> str:
         for i in [
-            MIsType.isDomain, MIsType.isARN, MIsType.isUA, MIsType.isEmail, MIsType.isIP,
-            MIsType.isTimestamp, MIsType.isURL, MIsType.isBool, MIsType.isUUID, MIsType.isASN
+            MIsType.isIP, MIsType.isTimestamp, MIsType.isUUID, MIsType.isMAC, MIsType.isEmail, MIsType.isBool,
+            MIsType.isURL, MIsType.isDomain, MIsType.isARN,
+            MIsType.isUA, MIsType.isASN
         ]:
-            t = i(label, json_type,value)
+            t = i(label, json_type, value)
             if t:
                 return t
 
     @staticmethod
     def getTestCases():
-        yield from MIsType.testDomain()
+        yield from MIsType.testIP()
+        yield from MIsType.testBool()
+        yield from MIsType.testTimestamp()
+        yield from MIsType.testUUID()
         yield from MIsType.testARN()
         yield from MIsType.testUA()
         yield from MIsType.testEmail()
-        yield from MIsType.testIP()
-        yield from MIsType.testTimestamp()
         yield from MIsType.testURL()
-        yield from MIsType.testBool()
-        yield from MIsType.testUUID()
+        yield from MIsType.testDomain()
         yield from MIsType.testASN()
+        yield from MIsType.testMAC()
 
     @staticmethod
     def main():
