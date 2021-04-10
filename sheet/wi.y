@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Window interface for the sheet.
 import argparse
 import traceback
 
@@ -16,7 +17,6 @@ except Exception:
 # noinspection PyBroadException
 try:
     import inputs
-    import filters
 except Exception as e:
     if str(e).startswith("No module named"):
         print("No directory(inputs)...pls run Sheet from the Sheet directory")
@@ -136,7 +136,7 @@ class QueryParams(wx.Dialog):
         self.Destroy()
 
 
-class Sheet(wx.Frame):
+class Wi(wx.Frame):
     def __init__(self, parent, query, cfg, title: str):
         wx.Frame.__init__(self, parent=parent, title=title)
         self.title = title
@@ -290,7 +290,7 @@ class Sheet(wx.Frame):
             else:
                 cfg["results"] = newResults
                 label = q.name() + " (" + q.query + ")"
-                Sheet(self, q, cfg, label)
+                Wi(self, q, cfg, label)
         self.enableQueries()
 
     def doFilter(self) -> None:
@@ -485,15 +485,15 @@ class Sheet(wx.Frame):
 
     @staticmethod
     def main():
-        parser = argparse.ArgumentParser(description="Sheet")
+        parser = argparse.ArgumentParser(description="Wi")
         parser.add_argument('-d', '--debug', help="activate debugging", action="store_true")
         args = parser.parse_args()
         app = wx.App(0)
-        cfg = Sheet.getCfg()
+        cfg = Wi.getCfg()
         cfg["debug"] = args.debug
-        Sheet(None, None, cfg, "Main")
+        Wi(None, None, cfg, "Main")
         app.MainLoop()
 
 
 if __name__ == "__main__":
-    Sheet.main()
+    Wi.main()

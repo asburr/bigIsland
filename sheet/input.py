@@ -9,7 +9,7 @@ class Input(ABC):
 
     @staticmethod
     @abstractmethod
-    def usage(self) -> dict:
+    def usage() -> dict:
         raise Exception("Abstract")
 
     @staticmethod
@@ -26,41 +26,12 @@ class Input(ABC):
                 error += "ERROR " + val + " is mapped but not in return\n"
         return error
 
-    def _translate_params(self, params: dict) -> dict:
-        d = {}
-        paramFields = self.usage()["params"]
-        transFields = self.usage()["map"]
-        for field in params.keys():
-            if not params[field]:
-                continue
-            if field in paramFields:
-                if field in transFields:
-                    d[transFields[field]] = params[field]
-        return d
-
-    def _build_query(self, translated_params: dict) -> str:
-        filt = ""
-        for field in translated_params:
-            if filt:
-                filt += " and "
-            filt += field + "=\"" + translated_params[field] + "\""
-        if filt:
-            self.query += filt
-        return filt
-
-    def _get_param(self, params: dict, field: str) -> str:
-        v = params[field]
-        del params[field]
-        if self.query:
-            self.query += "and "
-        self.query += field + "=" + v
-        return v
-
     @staticmethod
     @abstractmethod
     def name() -> str:
         raise Exception("Abstract")
 
+    @staticmethod
     @abstractmethod
-    def exec(self, params: dict, scratchPad: dict) -> Iterable[dict]:
+    def exec(params: dict, scratchPad: dict) -> Iterable[dict]:
         raise Exception("Abstract")

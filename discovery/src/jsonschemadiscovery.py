@@ -74,18 +74,23 @@ class JSONSchemaDiscovery:
         self.time_fields = time_fields
         self.ts = int(self.mzdatetime.timestamp())
 
-    @classmethod
-    def diffmark(cls, old: 'JSONSchemaDiscovery', new: 'JSONSchemaDiscovery') -> str:
+    def diffmark(self, old: 'JSONSchemaDiscovery') -> str:
         old_lst = []
-        cls._getStringRepresentation(parent="", r=old.r, rtn=old_lst, leaves=True, values=True)
+        self._getStringRepresentation(parent="", r=old.r, rtn=old_lst, leaves=True, values=True, counts=False)
         new_lst = []
-        cls._getStringRepresentation(parent="", r=new.r, rtn=new_lst, leaves=True, values=True)
-        diff = ""
+        self._getStringRepresentation(parent="", r=self.r, rtn=new_lst, leaves=True, values=True, counts=False)
         for y in difflib.unified_diff(a=old_lst, b=new_lst, fromfile="old", tofile="new", n=10000):
-            if diff:
-                diff += "\n"
-            diff += y
-        return diff
+            yield y
+
+    def diff(self, old: 'JSONSchemaDiscovery') -> dict:
+        old_lst = []
+        self._getStringRepresentation(parent="", r=old.r, rtn=old_lst, leaves=True, values=True, counts=False)
+        new_lst = []
+        self._getStringRepresentation(parent="", r=self.r, rtn=new_lst, leaves=True, values=True, counts=False)
+        for y in difflib.unified_diff(a=old_lst, b=new_lst, fromfile="old", tofile="new", n=10000):
+            if y.startswith("- ") or y.startswith("+ "):
+                a = y.split("=")
+                yield {"added": a[0][0] == "+", "field": a[0][2:], "example": a[1]}
 
     def jdump(self, f: any):
         json.dump(self.r, f)
@@ -154,8 +159,6 @@ class JSONSchemaDiscovery:
                 if not label:
                     cnt += 1
                     print(cnt)
-                    if cnt == 678:
-                        print(json.dumps(v))
                 o = self._load(label, v)
                 if f is None:
                     f = o

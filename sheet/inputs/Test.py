@@ -1,5 +1,5 @@
 from typing import Iterable
-from input import Input
+from sheet.input import Input
 
 
 class Test(Input):
@@ -42,11 +42,11 @@ class Test(Input):
             }
         }
 
-    def exec(self, params: dict, scratchPad: dict) -> Iterable[dict]:
-        q = self._build_query(self._translate_params(params))
+    @staticmethod
+    def exec(params: dict, scratchPad: dict) -> Iterable[dict]:
         for i in range(params["count"]):
             d = {}
-            for field, typ in self.usage()["return"].items():
+            for field, typ in Test.usage()["return"].items():
                 if typ == "str":
                     d[field] = "helloworld"
                 elif typ == "int":
