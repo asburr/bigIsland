@@ -1,0 +1,6 @@
+[
+ {"type": "ip", "field": "from"},
+ {"type": "ip", "field": "to"},
+ {"type": "ip", "field": "via"},
+ {"type": "ip", "field": "via"}
+]
