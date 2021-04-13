@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-# JSON Schema Discovery learns the document structure from a sample of JSON documents. And can take a stream of JSON
-# documents to continuously discover structural changes.
+# JSON Schema Discovery learns the document structure from a sample of JSON
+# documents. And can take a stream of JSON documents to continuously discover
+# structural changes.
 #
-# JSONSchemaDiscovery is needed when the JSON documents are too complex for human analysis to find traits and for a
-# human to get any kind of understanding across all of the documents. The same documents are loaded into
-# JSONSchemaDiscovery which identifies a structure that is true across all of the documents.
+# JSONSchemaDiscovery is needed when the JSON documents are too complex for
+# human analysis to find traits and for a
+# human to get any kind of understanding across all of the documents. The same
+# documents are loaded into
+# JSONSchemaDiscovery which identifies a structure that is true across all of
+# the documents.
 #
 # For example,
 #   jps = JSONSchemaDiscovery()
@@ -13,41 +17,61 @@
 #   jps.dumps()
 #   {"t": "list", "v": {"t": "int", "v": "1", "v2": "2"}}
 #
-# The representation a key-value pair of "t" that identifies the type and "v" the value. The leaf values
-# are int, float, and str. The leaf has a second value (v2) when in the sample documents there is a second value
+# The representation a key-value pair of "t" that identifies the type and "v"
+# the value. The leaf values
+# are int, float, and str. The leaf has a second value (v2) when in the sample
+# documents there is a second value
 # that is not the same as the first.
 #
 # The type can be "dict" and "switch".
 #
-# For example, two documents of the format {"f1": "2", "f2": 4} and {"f1": "2"}, are discovered as
-# field "f1" being required ("R") as in always present, and field "f2" being optional ("O") as in not always present.
-#   {"t": "dict", "v" {"R": {"f1": {"t": "int", "v": "2"}}, "O": {"f2": {"t": "int", "v": "4"}}}
+# For example, two documents of the format {"f1": "2", "f2": 4} and
+# {"f1": "2"}, are discovered as
+# field "f1" being required ("R") as in always present, and field "f2" being
+# optional ("O") as in not always present.
+#   {"t": "dict", "v" {"R": {"f1": {"t": "int", "v": "2"}}, "O": {"f2":
+#     {"t": "int", "v": "4"}}}
 #
-# A switch example, two document of the format {"a": 2, "b": 2} and {"a": 3, "c": 3}, are discovered as
-# field "a" being common and {"a": 2} is always followed by {"b": 2], and {"a": 3} is always followed by {"c": 3},
-# and it is described by a switch ("S") on the value in field "a". The switch is a list of cases.
+# A switch example, two document of the format {"a": 2, "b": 2} and
+# {"a": 3, "c": 3}, are discovered as
+# field "a" being common and {"a": 2} is always followed by {"b": 2], and
+# {"a": 3} is always followed by {"c": 3},
+# and it is described by a switch ("S") on the value in field "a". The switch
+# is a list of cases.
 #   {"t": "list", "v":
 #     {"t": "switch", "v" [
-#       {"S": {"a": {"t": "int", "v": "2"}}, "R": {"b": {"t": "int", "v": "2"}}, "O": {}},
-#       {"S": {"a": {"t": "int", "v": "3"}}, "R": {"c": {"t": "int", "v": "3"}}, "O": {}}
+#       {"S": {"a": {"t": "int", "v": "2"}},
+#        "R": {"b": {"t": "int", "v": "2"}}, "O": {}},
+#       {"S": {"a": {"t": "int", "v": "3"}},
+#        "R": {"c": {"t": "int", "v": "3"}}, "O": {}}
 #     ]
 #   }
 #
 # Incompatible documents are detected and an IncompatibleException is raised.
 #
-# For example, [1,2,3] is incompatible with ["a", "b", "c"], and {"a": 1} is incompatible with {"a": "a"}.
+# For example, [1,2,3] is incompatible with ["a", "b", "c"], and {"a": 1} is
+# incompatible with {"a": "a"}.
 #
-# Change detection is an optional feature that detects changes to the structure of documents.
-# Change detection works by recording the time when an element was last seen, and elements are deleted when they are
-# older than ageoff_hour_limit which is a parameter to JSONSchemaDiscovery(). Documents may have the time when they
-# were created. The name of these timestamp fields is specified by time_fields which is a parameter to
-# JSONSchemaDiscovery(). Discovery may need to be run on an initial sample in order to determine the field name.
-# A relative field name is used to identify fields that are not uniquely named. A the relative name uses a dot(.)
-# to separate the name of the parent field, for example, the following structure has two "time" fields, and
-# the parent name is used to identify "written.time" as the time when the document was created.
+# Change detection is an optional feature that detects changes to the
+# structure of documents.
+# Change detection works by recording the time when an element was last seen,
+# and elements are deleted when they are
+# older than ageoff_hour_limit which is a parameter to JSONSchemaDiscovery().
+# Documents may have the time when they
+# were created. The name of these timestamp fields is specified by time_fields
+# which is a parameter to
+# JSONSchemaDiscovery(). Discovery may need to be run on an initial sample in
+# order to determine the field name.
+# A relative field name is used to identify fields that are not uniquely named.
+# A the relative name uses a dot(.)
+# to separate the name of the parent field, for example, the following
+# structure has two "time" fields, and
+# the parent name is used to identify "written.time" as the time when the
+# document was created.
 # {"written": {"host": "DO123", "time": "20210428T06:46:22"},
 #  "firstSeen": {"host": "DO345", "time": "20200428T06:46:22"}}}
-# Change Detection is deactivated when ageoff_hour_limit is zero. And, the system clock is used when time_fields is
+# Change Detection is deactivated when ageoff_hour_limit is zero. And, the
+# system clock is used when time_fields is
 # None.
 #
 import copy
@@ -66,7 +90,8 @@ class IncompatibleException(Exception):
 
 class JSONSchemaDiscovery:
 
-    def __init__(self, debug: bool = False, ageoff_hour_limit: int = 0, time_fields: list = None):
+    def __init__(self, debug: bool = False, ageoff_hour_limit: int = 0,
+                 time_fields: list = None):
         self.debug = debug
         self.r = {}
         self.mzdatetime = MZdatetime()
@@ -76,21 +101,33 @@ class JSONSchemaDiscovery:
 
     def diffmark(self, old: 'JSONSchemaDiscovery') -> str:
         old_lst = []
-        self._getStringRepresentation(parent="", r=old.r, rtn=old_lst, leaves=True, values=True, counts=False)
+        self._getStringRepresentation(parent="", r=old.r, rtn=old_lst,
+                                      leaves=True, values=True, counts=False)
         new_lst = []
-        self._getStringRepresentation(parent="", r=self.r, rtn=new_lst, leaves=True, values=True, counts=False)
-        for y in difflib.unified_diff(a=old_lst, b=new_lst, fromfile="old", tofile="new", n=10000):
+        self._getStringRepresentation(parent="", r=self.r, rtn=new_lst,
+                                      leaves=True, values=True, counts=False)
+        for y in difflib.unified_diff(a=old_lst, b=new_lst, fromfile="old",
+                                      tofile="new", n=10000):
             yield y
 
     def diff(self, old: 'JSONSchemaDiscovery') -> dict:
         old_lst = []
-        self._getStringRepresentation(parent="", r=old.r, rtn=old_lst, leaves=True, values=True, counts=False)
+        if old.r:
+            self._getStringRepresentation(
+                parent="", r=old.r, rtn=old_lst,
+                leaves=True, values=True, counts=False)
         new_lst = []
-        self._getStringRepresentation(parent="", r=self.r, rtn=new_lst, leaves=True, values=True, counts=False)
-        for y in difflib.unified_diff(a=old_lst, b=new_lst, fromfile="old", tofile="new", n=10000):
-            if y.startswith("- ") or y.startswith("+ "):
+        if self.r:
+            self._getStringRepresentation(
+                parent="", r=self.r, rtn=new_lst, leaves=True,
+                values=True, counts=False)
+        for y in difflib.unified_diff(a=old_lst, b=new_lst, fromfile="old",
+                                      tofile="new", n=10000):
+            if not y.startswith("---") and not y.startswith("+++") and (
+                    y.startswith("-") or y.startswith("+")):
                 a = y.split("=")
-                yield {"added": a[0][0] == "+", "field": a[0][2:], "example": a[1]}
+                yield {"added": a[0][0] == "+", "field": a[0][2:],
+                       "example": a[1]}
 
     def jdump(self, f: any):
         json.dump(self.r, f)
@@ -104,9 +141,12 @@ class JSONSchemaDiscovery:
         return self._dumps(self.r, "")
 
     # Machine readable formatted representation.
-    def getStringRepresentation(self, leaves: bool, values: bool, counts: bool) -> str:
+    def getStringRepresentation(self, leaves: bool, values: bool,
+                                counts: bool) -> str:
         lst = []
-        self._getStringRepresentation(parent="", r=self.r, rtn=lst, leaves=leaves, values=values, counts=counts)
+        self._getStringRepresentation(
+            parent="", r=self.r, rtn=lst,
+            leaves=leaves, values=values, counts=counts)
         return "\n".join(lst)
 
     def load(self, obj: any) -> None:
@@ -147,9 +187,11 @@ class JSONSchemaDiscovery:
                     print("load dict " + field + " " + str(obj[field]))
                 d[field] = self._load(field, obj[field])
             if d:
-                return {"t": "dict", "ts": self.ts, "c": 1, "v": {"R": d, "O": {}}}
+                return {"t": "dict", "ts": self.ts,
+                        "c": 1, "v": {"R": d, "O": {}}}
             else:
-                return {"t": "dict", "ts": self.ts, "c": 1, "v": {"R": {}, "O": {}}}
+                return {"t": "dict", "ts": self.ts,
+                        "c": 1, "v": {"R": {}, "O": {}}}
         elif isinstance(obj, list):
             f = None
             cnt = 0
@@ -158,7 +200,8 @@ class JSONSchemaDiscovery:
                     print("load list element: " + str(v))
                 if not label:
                     cnt += 1
-                    print(cnt)
+                    if not (cnt % 100):
+                        print("Pls wait, processed: " + str(cnt))
                 o = self._load(label, v)
                 if f is None:
                     f = o
@@ -230,14 +273,16 @@ class JSONSchemaDiscovery:
         return nl
 
     def _caseToDict(self, c: dict) -> dict:
-        d = {"t": "dict", "ts": self.ts, "c": c["c"], "v": {"R": c["R"], "O": c["O"]}}
+        d = {"t": "dict", "ts": self.ts, "c": c["c"], "v": {"R": c["R"],
+                                                            "O": c["O"]}}
         cs = c["S"]
         for f in cs:
             d["v"]["R"][f] = cs[f]
         return d
 
     @classmethod
-    def _dictBackToCase(cls, d: dict, oldc: dict, mayReduceSelected: bool = False) -> dict:
+    def _dictBackToCase(cls, d: dict, oldc: dict,
+                        mayReduceSelected: bool = False) -> dict:
         dvr, dvo = (d["v"]["R"], d["v"]["O"])
         os = oldc["S"]
         rtn = {"S": {}, "ts": d["ts"], "c": d["c"], "R": {}, "O": dvo}
@@ -246,14 +291,18 @@ class JSONSchemaDiscovery:
             if f in dvr:
                 rs[f] = dvr[f]
             elif not mayReduceSelected:
-                raise IncompatibleException("Cannot reduce selected " + str(os) + " " + str(dvr))
+                raise IncompatibleException("Cannot reduce selected " +
+                                            str(os) + " " + str(dvr))
         for f in dvr:
             if f not in rs:
                 rr[f] = dvr[f]
         if not rs:
-            raise IncompatibleException("Dict has no selected fields " + str(rtn) + " " + str(d))
+            raise IncompatibleException("Dict has no selected fields " +
+                                        str(rtn) + " " + str(d))
         if not rr and not ro:
-            raise IncompatibleException("Dict is all selected with no R/O fields " + str(rtn) + " " + str(d))
+            raise IncompatibleException(
+                "Dict is all selected with no R/O fields " + str(rtn) +
+                " " + str(d))
         return rtn
 
     def mergeSwitchDict(self, s: dict, d: dict, level: int) -> dict:
@@ -268,7 +317,8 @@ class JSONSchemaDiscovery:
         for i, c in enumerate(ov):
             try:
                 oc = rv[i]
-                rv[i] = self._dictBackToCase(self.mergeDictDict(self._caseToDict(c), d, level=level), c)
+                rv[i] = self._dictBackToCase(self.mergeDictDict(
+                    self._caseToDict(c), d, level=level), c)
                 if self.debug:
                     print(str(level) + " mergeSwitchDict")
                     print(d)
@@ -287,7 +337,8 @@ class JSONSchemaDiscovery:
         ncs = nc["S"]
         if not ncs:
             raise Exception("Empty select")
-        # third, a new case with less selected fields and check if other cases can be merged.
+        # third, a new case with less selected fields and check if other
+        # cases can be merged.
         if len(ncs) < len(ocs):
             # 3.1, the smaller selector must be unique of all of the old cases.
             ocKeys = set()  # Set to test for uniqueness.
@@ -296,14 +347,18 @@ class JSONSchemaDiscovery:
                 ocs = oc["S"]
                 for f, v in ocs.items():
                     if f in ncs:
-                        ocKey += ";" + v.getStringRepresentation(leaves=True, values=True, counts=False)
+                        ocKey += ";" + v.getStringRepresentation(
+                            leaves=True, values=True, counts=False)
                 if ocKey in ocKeys:  # Another case has the same key.
-                    raise IncompatibleException("Dict missing selectors " + str(nc["S"]) + " " + str(oc["S"]))
+                    raise IncompatibleException(
+                        "Dict missing selectors " + str(nc["S"]) +
+                        " " + str(oc["S"]))
                 ocKeys.add(ocKey)
             # 3.2, reduce the selectors in all of the old cases.
             rv = rtn["v"] = []
             for oc in ov:
-                c = {"S": {}, "ts": oc["ts"], "c": oc["c"], "R": copy.copy(oc["R"]), "O": oc["O"]}
+                c = {"S": {}, "ts": oc["ts"], "c": oc["c"],
+                     "R": copy.copy(oc["R"]), "O": oc["O"]}
                 cs = c["S"]
                 cr = c["R"]
                 for f, v in oc["S"].items():
@@ -337,7 +392,9 @@ class JSONSchemaDiscovery:
             print(d2)
         r1, o1 = (d1["v"]["R"], d1["v"]["O"])
         r2, o2 = (d2["v"]["R"], d2["v"]["O"])
-        newd = {"t": "dict", "ts": self.ts, "c": d1["c"] + d2["c"], "v": {"R": {}, "O": {}}}
+        newd = {"t": "dict", "ts": self.ts,
+                "c": d1["c"] + d2["c"],
+                "v": {"R": {}, "O": {}}}
         newr, newo = (newd["v"]["R"], newd["v"]["O"])
         for f1 in r1:
             if f1 in r2:
@@ -385,14 +442,17 @@ class JSONSchemaDiscovery:
         field_same_value = []
         for f in newS:
             if (
-                    self._getStringRepresentations(r=r1[f], leaves=True, values=True, counts=False) ==
-                    self._getStringRepresentations(r=r2[f], leaves=True, values=True, counts=False)
+                    self._getStringRepresentations(
+                        r=r1[f], leaves=True, values=True, counts=False) ==
+                    self._getStringRepresentations(
+                        r=r2[f], leaves=True, values=True, counts=False)
             ):
                 field_same_value.append(f)
         for f in field_same_value:
             del newS[f]
         if not newS:
-            raise IncompatibleException("Nothing to switch on. Common fields have the same values.")
+            raise IncompatibleException(
+                "Nothing to switch on. Common fields have the same values.")
         new = {"t": "switch", "ts": self.ts, "c": d1["c"] + d2["c"], "v": [
             {"S": {}, "ts": d1["ts"], "c": d1["c"], "R": {}, "O": o1},
             {"S": {}, "ts": d2["ts"], "c": d2["c"], "R": {}, "O": o2}
@@ -413,24 +473,31 @@ class JSONSchemaDiscovery:
         return new
 
     def mergeDictValue(self, d: dict, v: dict, level: int) -> dict:
-        raise IncompatibleException("mergeDictValue need field name to merge into dict " + str(d) + " value " + str(v))
+        raise IncompatibleException(
+            "mergeDictValue need field name to merge into dict " +
+            str(d) + " value " + str(v))
 
     def mergeSwitchValue(self, s: dict, v: dict, level: int) -> dict:
-        raise IncompatibleException("mergeSwitchValue need field name to merge into switch " + str(s) + " value " +
-                                    str(v))
+        raise IncompatibleException(
+            "mergeSwitchValue need field name to merge into switch " +
+            str(s) + " value " + str(v))
 
     # Machine readable formatted representation.
-    def _getStringRepresentations(self, r: dict,
-                                  leaves: bool = True, values: bool = False, counts: bool = False) -> str:
+    def _getStringRepresentations(
+            self, r: dict, leaves: bool = True, values: bool = False,
+            counts: bool = False) -> str:
         lst = []
-        self._getStringRepresentation(parent="", r=r, rtn=lst, leaves=leaves, values=values, counts=counts)
+        self._getStringRepresentation(parent="", r=r, rtn=lst, leaves=leaves,
+                                      values=values, counts=counts)
         return "\n".join(lst)
 
-    # Generate a string representation of the structure in "r". For t="switch" it generated the same representation
+    # Generate a string representation of the structure in "r". For t="switch"
+    # it generated the same representation
     # as though it were a t="dict".
     @classmethod
-    def _getStringRepresentation(cls, parent: str, r: dict, rtn: list,
-                                 leaves: bool = True, values: bool = False, counts: bool = False):
+    def _getStringRepresentation(
+            cls, parent: str, r: dict, rtn: list,
+            leaves: bool = True, values: bool = False, counts: bool = False):
         t = r["t"]
         v = r["v"]
         if not v:
@@ -446,17 +513,20 @@ class JSONSchemaDiscovery:
                     for fn, f in x.items():
                         fields[parent + "." + xn + "." + fn] = f
             for n, v in sorted(fields.items()):
-                cls._getStringRepresentation(n, v, rtn=rtn, leaves=leaves, values=values, counts=counts)
+                cls._getStringRepresentation(n, v, rtn=rtn, leaves=leaves,
+                                             values=values, counts=counts)
             return
         if t == "dict":
             for xn, x in sorted(v.items()):  # O and R
                 for fn, f in sorted(x.items()):
-                    cls._getStringRepresentation(parent + "." + xn + "." + fn, f, rtn=rtn,
-                                                 leaves=leaves, values=values, counts=counts)
+                    cls._getStringRepresentation(
+                        parent + "." + xn + "." + fn, f, rtn=rtn,
+                        leaves=leaves, values=values, counts=counts)
             return
         if t == "list":
-            cls._getStringRepresentation(parent + ".list.", v, rtn=rtn,
-                                         leaves=leaves, values=values, counts=counts)
+            cls._getStringRepresentation(
+                parent + ".list.", v, rtn=rtn,
+                leaves=leaves, values=values, counts=counts)
             return
         if not leaves:
             rtn.append(parent)
@@ -481,7 +551,8 @@ class JSONSchemaDiscovery:
             else:
                 rtn.append(parent + "." + t)
 
-    # Walks the representation putting the structure and leaf values into the returned string.
+    # Walks the representation putting the structure and leaf values into the
+    # returned string.
     @classmethod
     def _dumps(cls, r: dict, indent: str) -> str:
         t = r["t"]
@@ -509,7 +580,9 @@ class JSONSchemaDiscovery:
                 cs = c["S"]
                 lst = []
                 for f in cs:
-                    cls._getStringRepresentation(parent=f + "=", r=cs[f], rtn=lst, leaves=True, values=True)
+                    cls._getStringRepresentation(
+                        parent=f + "=", r=cs[f], rtn=lst, leaves=True,
+                        values=True)
                 cn = hashlib.shake_128(";".join(lst).encode()).hexdigest(1)
                 cases[cn] = c
             rtn += "switch [" + str(r["ts"]) + "] {" + str(r["c"]) + "}:\n"
@@ -532,15 +605,18 @@ class JSONSchemaDiscovery:
                         rtn += cls._dumps(c["O"][f], indent + "    ")
             return rtn
         if "v2" in r:
-            return rtn + t + "[" + str(r["ts"]) + "]{" + str(r["c"]) + "}=[" + v + "," + r["v2"] + "]\n"
-        return rtn + t + "[" + str(r["ts"]) + "]{" + str(r["c"]) + "}=" + str(v) + "\n"
+            return (rtn + t + "[" + str(r["ts"]) + "]{" + str(r["c"]) +
+                    "}=[" + v + "," + r["v2"] + "]\n")
+        return (rtn + t + "[" + str(r["ts"]) + "]{" + str(r["c"]) + "}=" +
+                str(v) + "\n")
 
     # Return a list of fields that have aged off.
     def ageOff(self) -> list:
         rtn = []
         self.ts = self.mzdatetime.timestamp() - (self.ageoff_hour_limit * 60)
         if self._ageOff(parent="", r=self.r, rtn=rtn):
-            self._getStringRepresentation(parent="", r=self.r, rtn=rtn, leaves=True, values=True)
+            self._getStringRepresentation(
+                parent="", r=self.r, rtn=rtn, leaves=True, values=True)
             self.r = {}
         return rtn
 
@@ -556,17 +632,23 @@ class JSONSchemaDiscovery:
                 return True
             lst = []
             for f in v["R"]:
-                if self._ageOff(parent=parent + ".dict.R", r=v["R"][f], rtn=rtn):
+                if self._ageOff(parent=parent + ".dict.R", r=v["R"][f],
+                                rtn=rtn):
                     lst.append(f)
             for f in lst:
-                self._getStringRepresentation(parent=parent + ".dict.R", r=v["R"][f], rtn=rtn, leaves=True, values=True)
+                self._getStringRepresentation(
+                    parent=parent + ".dict.R", r=v["R"][f], rtn=rtn,
+                    leaves=True, values=True)
                 del v["R"][f]
             lst = []
             for f in v["O"]:
-                if self._ageOff(parent=parent + ".dict.O", r=v["O"][f], rtn=rtn):
+                if self._ageOff(parent=parent + ".dict.O", r=v["O"][f],
+                                rtn=rtn):
                     lst.append(f)
             for f in lst:
-                self._getStringRepresentation(parent=parent + ".dict.O", r=v["O"][f], rtn=rtn, leaves=True, values=True)
+                self._getStringRepresentation(
+                    parent=parent + ".dict.O", r=v["O"][f], rtn=rtn,
+                    leaves=True, values=True)
                 del v["O"][f]
             return False
         if t == "switch":
@@ -575,31 +657,40 @@ class JSONSchemaDiscovery:
             for c in v:
                 lst = []
                 for f in c["S"]:
-                    if self._ageOff(parent=parent + "switch.S", r=c["S"][f], rtn=rtn):
+                    if self._ageOff(
+                            parent=parent + "switch.S", r=c["S"][f], rtn=rtn):
                         lst.append(f)
                 for f in lst:
-                    self._getStringRepresentation(parent=parent + "switch.S", r=c["S"][f], rtn=rtn,
-                                                  leaves=True, values=True)
+                    self._getStringRepresentation(
+                        parent=parent + "switch.S", r=c["S"][f], rtn=rtn,
+                        leaves=True, values=True)
                     del c["S"][f]
-                    raise Exception("Aging odd selected fields, must rebuild the switch")
+                    raise Exception(
+                        "Aging odd selected fields, must rebuild the switch")
                     # TODO: rebuild switch or should the case be deleted?
                 if c["R"]:
                     lst = []
                     for f in c["R"]:
-                        if self._ageOff(parent=parent + "switch.R", r=c["R"][f], rtn=rtn):
+                        if self._ageOff(
+                                parent=parent + "switch.R", r=c["R"][f],
+                                rtn=rtn):
                             lst.append(f)
                     for f in lst:
-                        self._getStringRepresentation(parent=parent + "switch.R", r=c["R"][f],
-                                                      rtn=rtn, leaves=True, values=True)
+                        self._getStringRepresentation(
+                            parent=parent + "switch.R", r=c["R"][f],
+                            rtn=rtn, leaves=True, values=True)
                         del c["R"][f]
                 if c["O"]:
                     lst = []
                     for f in c["O"]:
-                        if self._ageOff(parent=parent + "switch.O", r=c["O"][f], rtn=rtn):
+                        if self._ageOff(
+                                parent=parent + "switch.O", r=c["O"][f],
+                                rtn=rtn):
                             lst.append(f)
                     for f in lst:
-                        self._getStringRepresentation(parent=parent + "switch.O", r=c["O"][f],
-                                                      rtn=rtn, leaves=True, values=True)
+                        self._getStringRepresentation(
+                            parent=parent + "switch.O", r=c["O"][f],
+                            rtn=rtn, leaves=True, values=True)
                         del c["O"][f]
             return False
         return r["ts"] < self.ts
@@ -671,10 +762,15 @@ class JSONSchemaDiscovery:
     @staticmethod
     def main():
         parser = argparse.ArgumentParser(description="Sheet")
-        parser.add_argument('-d', '--debug', help="activate debugging", action="store_true")
-        parser.add_argument('-i', '--input', help="input file(s) coma separated, default is to run the testcases")
+        parser.add_argument('-d', '--debug', help="activate debugging",
+                            action="store_true")
+        parser.add_argument(
+            '-i', '--input',
+            help=("input file(s) coma separated, default is to run "
+                  "the testcases"))
         args = parser.parse_args()
         js = JSONSchemaDiscovery(debug=args.debug)
+        oldjs = JSONSchemaDiscovery(debug=False)
         if args.input:
             for fn in args.input.split(","):
                 if args.debug:
@@ -682,20 +778,23 @@ class JSONSchemaDiscovery:
                 with open(fn, "r") as fp:
                     js.load(json.load(fp))
             print(js.dumps())
-            # print(json.dumps(js.r, indent=4))
-            # print(js.getStringRepresentation(leaves=True, values=True, counts=True))
             return
         d = {"h": 1, "f": [2, 3, 4], "g": "a", "j": {"f": 5}}
         print("**load** " + str(d))
         js.load(d)
+        oldjs.load(d)
         d = {"h": 1, "f": [6, 7, 8], "g": "b"}
         print("**load**" + str(d))
         js.load(d)
+        print("Difference")
+        for x in js.diff(old=oldjs):
+            print(x)
         d = {"h": 9, "i": 10}
         print("**load**" + str(d))
         js.load(d)
         print(js.dumps())
-        print(js.getStringRepresentation(leaves=True, values=True, counts=True))
+        print(js.getStringRepresentation(
+            leaves=True, values=True, counts=True))
         js = JSONSchemaDiscovery(debug=False)
         js.load({"k": 1, "sk": 11, "f": "A"})
         print(js.r)

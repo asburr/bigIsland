@@ -13,6 +13,7 @@ class Discovery(Input):
 
     sample = "path to sample file"
     discovery = "path to discovery file"
+
     @staticmethod
     def usage() -> dict:
         return {
@@ -38,11 +39,11 @@ class Discovery(Input):
 
     @staticmethod
     def exec(params: dict, scratchPad: dict) -> dict:
-        oldjs = JSONSchemaDiscovery(debug=params["debug"])
+        oldjs = JSONSchemaDiscovery(debug=False)
         js = JSONSchemaDiscovery(debug=params["debug"])
         if Discovery.discovery in params:
             # Read old discovery.
-            try :
+            try:
                 with open(params[Discovery.discovery], "r") as fp:
                     oldjs.jload(fp)
                 with open(params[Discovery.discovery], "r") as fp:
@@ -58,7 +59,8 @@ class Discovery(Input):
                 with open(params[Discovery.discovery], "w") as fp:
                     js.jdump(fp)
             except Exception:
-                print("ERROR failed to save discovery to " + params[Discovery.discovery])
+                print("ERROR failed to save discovery to " +
+                      params[Discovery.discovery])
                 pass
         for d in js.diff(oldjs):
             yield d
