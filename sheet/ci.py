@@ -3,20 +3,28 @@
 import sys
 import os
 import json
+import re
+import pandas as pd
 from sheet.input import Input
 from cmd2 import Cmd, Cmd2ArgumentParser, with_argparser
 import traceback
-# noinspection PyBroadException
 try:
     import sheet.inputs
-except Exception as e:
-    if str(e).startswith("No module named"):
-        print("No directory(inputs)...pls run Sheet from the bigIsland"
-              "directory")
-    elif str(e).startswith("invalid syntax"):
-        print("There are syntax errors in the inputs plugins, pls debug")
+except ModuleNotFoundError:
+    print("No directory(inputs)...pls run Sheet from the bigIsland"
+          "directory")
+    sys.exit(1)
+except NameError or SyntaxError:
+    print("There are syntax errors in the inputs plugins, pls debug")
     traceback.print_exc()
     sys.exit(1)
+
+
+class Result():
+    def __init__(self, df: pd.DataFrame, qn: str, p: dict):
+        self.df = df
+        self.qn = qn
+        self.params = p
 
 
 class Ci(Cmd):
@@ -24,6 +32,7 @@ class Ci(Cmd):
     def __init__(self):
         super().__init__(use_ipython=True)
         self.context = {"debug": False}
+        # noinspection PyBroadException
         try:
             with open(".ci_context.json", "r") as fp:
                 self.context = json.load(fp)
@@ -53,7 +62,7 @@ class Ci(Cmd):
     queryparser.add_argument('query_name', nargs="?", type=str, const="",
                              help='Run the named query and generate results')
 
-    def _getParams(self, q: Input) -> None:
+    def _getParams(self, q: Input) -> dict:
         params = q.usage()["params"]
         for param, ptype in params.items():
             if param not in self.context:
@@ -100,8 +109,12 @@ class Ci(Cmd):
                 self.context[param] = input(prompt)
                 if not self.context[param]:
                     self.context[param] = default
+        pl = {}
+        for param in params.keys():
+            pl[param] = self.context[param]
         with open(".ci_context.json", "w") as fp:
             json.dump(self.context, fp)
+        return param
 
     @with_argparser(queryparser)
     def do_q(self, args):
@@ -124,30 +137,137 @@ class Ci(Cmd):
                     for n in self.query.keys():
                         print(n + "(" + self.shortMapping[n] + ")")
                 return
-            self._getParams(q)
-            result = []
-            for r in q.exec(params=self.context,
-                            scratchPad=self.scratchPad):
-                result.append(r)
-            print(str(len(result)) + " results")
-            if result:
-                self.savedResults.append(result)
+            params = self._getParams(q)
+            columns = list(q.usage()["return"].keys())
+            if columns:
+                result = pd.DataFrame(columns=columns)
+                for r in q.exec(params=self.context,
+                                scratchPad=self.scratchPad):
+                    row = len(result)
+                    for k in columns:
+                        result.at[row, k] = r[k]
+                print(str(len(result)) + " results")
+                if len(result):
+                    self.savedResults.append(
+                        Result(df=result, qn=q.name(), p=params))
+            else:
+                q.exec(params=self.context, scratchPad=self.scratchPad)
         except Exception:
             traceback.print_exc()
             return 0
+
+    showparser = Cmd2ArgumentParser()
+    showparser.add_argument(
+        '-R' '--remove_row', type=str, default="",
+        help='Condition(s) to remove the row i.e. a == 1 and b == 2')
+    showparser.add_argument(
+        '-r' '--include_row', type=str, default="",
+        help='Condition(s) to include the row i.e. a < 1 and b > 3')
+    showparser.add_argument(
+        '-C' '--remove_column', type=str, default="",
+        help='Coma separated patterns identifying cols to remove i.e. a_*,b_*')
+    showparser.add_argument(
+        '-c' '--include_column', type=str, default="",
+        help='Coma separated patterns identifying cols to include i.e. *X')
+    # -g/-s removes the cols that are not grouped-by and not summed.
+    showparser.add_argument(
+        '-g' '--group_by_column', type=str, default="",
+        help='Coma separate patterns identifying cols to group-by for (-s)')
+    showparser.add_argument(
+        '-s' '--sum_column', type=str, default="",
+        help='Coma separate patterns identifying cols to sum for (-g)')
 
     def do_s(self, args):
         """Show recent result"""
         if not self.savedResults:
             print("No results")
         else:
-            print(str(len(self.savedResults)) +
-                  " saved results, recent result:")
-            for r in self.savedResults[-1]:
-                if r["added"]:
-                    print("+ " + r["field"])
-                else:
-                    print("- " + r["field"])
+            result = self.savedResults[-1]
+            columns = result.df.columns.tolist()
+            df = result.df.copy()
+            if args.remove_row:
+                try:
+                    df.query(expr=args.remove_row, inplace=True)
+                except Exception as e:
+                    print("Error in " + args.remove_row + " " + str(e))
+                    return
+            if args.include_row:
+                try:
+                    df.query(expr=args.include_row, inplace=True)
+                except Exception as e:
+                    print("Error in " + args.include_row + " " + str(e))
+                    return
+            if args.remove_column:
+                try:
+                    for pattern in args.remove_column.split(","):
+                        pat = re.compile(pattern)
+                        for col in columns:
+                            if pat.match(col):
+                                df.drop(columns=col, inplace=True)
+                except Exception as e:
+                    print("Error in " + args.remove_column + " " + str(e))
+                    return
+            if args.include_column:
+                try:
+                    ic = set()
+                    for pattern in args.include_column.split(","):
+                        pat = re.compile(pattern)
+                        for col in columns:
+                            if pat.match(col):
+                                ic.add(col)
+                    for col in columns:
+                        if col not in ic:
+                            df.drop(columns=col, inplace=True)
+                except Exception as e:
+                    print("Error in " + args.include_column + " " + str(e))
+                    return
+            if args.group_by_column and args.sum_column:
+                try:
+                    gb = set()
+                    for pattern in args.group_by_column.split(","):
+                        pat = re.compile(pattern)
+                        for col in columns:
+                            if pat.match(col):
+                                gb.add(col)
+                    if not gb:
+                        print("Error in -g " +
+                              args.group_by_column + " -s " +
+                              " not columns selected")
+                        return
+                    sc = set()
+                    for pattern in args.sum_column.split(","):
+                        pat = re.compile(pattern)
+                        for col in columns:
+                            if pat.match(col):
+                                sc.add(col)
+                    if not sc:
+                        print("Error in -s " +
+                              args.sum_column + " -s " +
+                              " not columns selected")
+                        return
+                    for col in columns:
+                        if col in gb and col in sc:
+                            print("Error in -g " +
+                                  args.group_by_column + " -s " +
+                                  args.sum_column + " " +
+                                  " select the same col " + col)
+                            return
+                except Exception as e:
+                    print("Error in " +
+                          args.group_by_column + " " +
+                          args.sum_column + " " +
+                          str(e))
+                    return
+            
+            filt = {"remove_row": args.remove_row,
+                    "include_row": args.include_row,
+                    "remove_column": args.remove_column,
+                    "include_column": args.include_column,
+                    "group_by_column": args.group_by_column,
+                    "sum_column": args.sum_column}
+            self.savedResults.append(
+                Result(df=result, qn="_filter_", p=filt))
+            print()
 
     def do_d(self, args):
         """Delete recent result"""
