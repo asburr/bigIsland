@@ -82,6 +82,11 @@ import json
 import traceback
 from magpie.src.mistype import MIsType
 from magpie.src.mzdatetime import MZdatetime
+from discovery.src.parser import Parser
+from discovery.src.JSONParser import JSONParser
+from discovery.src.XMLParser import XMLParser
+from discovery.src.CSVParser import CSVParser
+import os
 
 
 class IncompatibleException(Exception):
@@ -98,8 +103,100 @@ class SchemaDiscovery():
         self.time_fields = time_fields
         self.ts = int(self.mzdatetime.timestamp())
         self.r = {}
-        self.stack = [{}]
-        self.changeStructure = ""
+        self.r_changed = False
+        # parse:
+        self.raw_row_stack = []
+        self.raw_row = []
+        self.mapped_row_stack = []
+        self.mapped_row = []
+        # load; rebuilding row.
+        self.selecting = False  # tmp; parsing switches
+        self.raw_row_idx = 0  # tmp; rebuild indexes
+        self.mapped_row_idx = 0  # tmp; rebuild indexes
+        self.raw_row_index = {}  # Field-name to mapped_row index.
+        self.mapped_row_index = {}  # Field-name to mapped_row index.
+
+    # Return rows of data seen in the file.
+    def parse(self, file: str, p: Parser) -> (list, list):
+        if self.r_changed:
+            self.rebuild_row()
+            self.r_change = False
+        self.parse_stack = [{"file": file}]
+        j = p.toJSON(file)
+        for row in self._parse(self, l="", r=self.r, j=j):
+            yield row
+
+    def _parse(self, l: str, r: any, j: any) -> list:
+        t = r["t"]
+        v = r["v"]
+        if "rec" in r:
+            self.raw_row_stack.append([])
+            self.mapped_row_stack.append([])
+        if t == "list":
+            if not isinstance(j, list):
+                raise IncompatibleException("Expect list got " + str(type(j)))
+            for nj in j:
+                for x in self._parse(l=l, r=v, j=j):
+                    yield x
+        elif t == "dict":
+            if not isinstance(j, dict):
+                raise IncompatibleException("Expect dict got " + str(type(j)))
+            for f in v["R"].keys():
+                if f not in j:
+                    raise IncompatibleException("Expect field " + f)
+                for x in self._parse(l=f, r=v, j=j[f]):
+                    yield x
+            for f in v["O"].keys():
+                if f not in j:
+                    continue
+                for x in self._parse(l=f, r=v, j=j[f]):
+                    yield x
+        elif t == "switch":
+            for c in v:
+                cs = c["S"]
+                self.selecting = True
+                rtn = []
+                for f in cs:
+                    if f not in j:
+                        self.selecting = False
+                        break
+                    for x in self._parse(l=f, r=cs[f], j=j[f]):
+                        rtn.append(x)
+                if not self.selecting:
+                    rtn = []
+                    continue
+                for x in rtn:
+                    yield x
+                if c["R"]:
+                    for f in c["R"].keys():
+                        if f not in j:
+                            raise IncompatibleException("Expect field " + f)
+                        for x in self._parse(l=f, r=c["R"][f], j=j[f]):
+                            yield x
+                if c["O"]:
+                    for f in c["O"].keys():
+                        if f not in j:
+                            continue
+                        for x in self._parse(l=f, r=c["O"][f], j=j[f]):
+                            yield x
+        else:
+            s = str(j)
+            if self.selecting:
+                self.selecting &= (s == v)
+            jt = MIsType.isType(l, type(j), s)
+            if jt != t:
+                raise IncompatibleException("Expect type " + t + " got " + jt)
+            self.raw_row[r["ri"]] = s
+            if "mi" in r:
+                self.mapped_row[r["mi"]] = s
+        if "rec" in r:
+            yield self.raw_row, self.mapped_row
+            for ri in self.raw_row_stack[-1]:
+                del self.raw_row[ri]
+            del self.raw_row_stack[-1]
+            for ri in self.mapped_row_stack[-1]:
+                del self.mapped_row[ri]
+            del self.mapped_row_stack[-1]
 
     def diffmark(self, old: 'SchemaDiscovery') -> str:
         old_lst = []
@@ -151,15 +248,16 @@ class SchemaDiscovery():
             leaves=leaves, values=values, counts=counts)
         return "\n".join(lst)
 
-    def load(self, obj: any, rows: list) -> None:
+    def load(self, obj: any) -> None:
         self.ts = int(self.mzdatetime.timestamp())
-        r = self._load("", obj, rows)
+        r = self._load("", obj)
         if self.r:
             self.r = self.merge(self.r, r, level=1)
+            self.r_changed = True  # Potential change.
         else:
             self.r = r
 
-    def _load(self, label: str, obj: any, rows: list) -> dict:
+    def _load(self, label: str, obj: any) -> dict:
         if isinstance(obj, dict):
             lst = list(obj.keys())
             d = {}
@@ -294,7 +392,7 @@ class SchemaDiscovery():
         ov = s["v"]
         rtn = {"t": "switch", "ts": self.ts, "c": s["c"] + d["c"], "v": ov}
         rv = rtn["v"]
-        # First, does dict fits into one of the cases.
+        # First, does dict fit into one of the cases.
         for i, c in enumerate(ov):
             try:
                 oc = rv[i]
@@ -464,14 +562,13 @@ class SchemaDiscovery():
             str(s) + " value " + str(v))
 
     # Machine readable formatted representation.
-    # Also rebuilds the indexes to the row of values.
+    # Also rebuilds the indexes to the row of values, i.e. ri and mi.
     def _getStringRepresentations(
             self, r: dict, leaves: bool = True, values: bool = False,
             counts: bool = False) -> str:
         lst = []
         self._getStringRepresentation(parent="", r=r, rtn=lst, leaves=leaves,
-                                      values=values, counts=counts,
-                                      raw_row_idx = 0, mapped_row_idx = 0)
+                                      values=values, counts=counts)
         return "\n".join(lst)
 
     # Generate a string representation of the structure in "r". For t="switch"
@@ -480,22 +577,16 @@ class SchemaDiscovery():
     @classmethod
     def _getStringRepresentation(
             cls, parent: str, r: dict, rtn: list,
-            leaves: bool = True, values: bool = False, counts: bool = False,
-            raw_row_idx: int, mapped_row_idx: int) -> None:
+            leaves: bool = True, values: bool = False, counts: bool = False
+            ) -> None:
         t = r["t"]
         v = r["v"]
         if not v:
             return
-        if "raw_row_idx" in r:
-            del r["raw_row_idx"]
-        if "mapped_row_idx" in r:
-            del r["mapped_row_idx"]
         if t == "switch":
             fields = {}
             for c in v:
                 for n, x in c.items():  # O, R, and S
-                    if n in ["ts", "c"]:
-                        continue
                     if n == "S":
                         xn = "R"
                     else:
@@ -504,29 +595,20 @@ class SchemaDiscovery():
                         fields[parent + "." + xn + "." + fn] = f
             for n, v in sorted(fields.items()):
                 cls._getStringRepresentation(n, v, rtn=rtn, leaves=leaves,
-                                             values=values, counts=counts,
-                                             row_cnt=row_cnt)
+                                             values=values, counts=counts)
             return
         if t == "dict":
             for xn, x in sorted(v.items()):  # O and R
                 for fn, f in sorted(x.items()):
                     cls._getStringRepresentation(
                         parent + "." + xn + "." + fn, f, rtn=rtn,
-                        leaves=leaves, values=values, counts=counts,
-                        row_cnt=row_cnt)
+                        leaves=leaves, values=values, counts=counts)
             return
         if t == "list":
             cls._getStringRepresentation(
                 parent + ".list.", v, rtn=rtn,
-                leaves=leaves, values=values, counts=counts,
-                row_cnt=row_cnt)
+                leaves=leaves, values=values, counts=counts)
             return
-        # Maintain the row indexes
-        r["raw_row_idx"] = raw_row_cnt
-        raw_row_cnt += 1
-        if "mapped" in v:
-            r["mapped_row_idx"] = mapped_row_idx
-            mapped_row_idx += 1
         if not leaves:
             rtn.append(parent)
         t = cls.mainType(t)
@@ -549,6 +631,56 @@ class SchemaDiscovery():
                 rtn.append(parent + "." + t + "{" + r["c"] + "}")
             else:
                 rtn.append(parent + "." + t)
+
+    def rebuild_row(self) -> None:
+        self.raw_row_idx = 0
+        self.mapped_row_idx = 0
+        self._rebuild_row(l="", r=self.r)
+
+        self.raw_row_index = {}  # Field-name to mapped_row index.
+        self.mapped_row_index = {}  # Field-name to mapped_row index.
+
+    def _rebuild_row(self, l: str, r: dict) -> None:
+        t = r["t"]
+        v = r["v"]
+        if not v:
+            return
+        if "ri" in r:
+            del r["ri"]
+        if "mi" in r:
+            del r["mi"]
+        if t == "switch":
+            for c in v:
+                cs = c["S"]
+                lst = []
+                for f in cs:
+                    self._getStringRepresentation(
+                        parent=f + "=", r=cs[f], rtn=lst, leaves=True,
+                        values=True)
+                cn = hashlib.shake_128(";".join(lst).encode()).hexdigest(1)
+                for xn, x in sorted(c.items()):  # O, R, and S
+                    for fn, f in sorted(x.items()):
+                        self._rebuild_row(l=l+".C"+cn+"."+xn+"."+fn, r=f)
+            return
+        if t == "dict":
+            for xn, x in sorted(v.items()):  # O and R
+                for fn, f in sorted(x.items()):
+                    self._rebuild_row(l=l+"."+xn+"."+fn, r=f)
+            return
+        if t == "list":
+            self._rebuild_row(v)
+            return
+        # Maintain the row indexes
+        if l in self.raw_row_index:
+            raise Exception("Duplicate label " + l)
+        r["ri"] = self.raw_row_index[l] = len(self.raw_row_index)
+        # TODO mapping must add m to each mapped field.
+        if "m" in v:
+            if v["m"] in self.mapped_row_index:
+                r["mi"] = self.mapped_row_index[v["m"]]
+            else:
+                r["mi"] = len(self.mapped_row_index)
+                self.mapped_row_index[v["m"]] = r["mi"]
 
     # Walks the representation putting the structure and leaf values into the
     # returned string.
@@ -609,47 +741,45 @@ class SchemaDiscovery():
         return (rtn + t + "[" + str(r["ts"]) + "]{" + str(r["c"]) + "}=" +
                 str(v) + "\n")
 
-    # Return a list of fields that have aged off.
-    def ageOff(self) -> list:
-        rtn = []
+    # Return True if anything was aged off.
+    def ageOff(self) -> bool:
+        if not self.ageoff_hour_limit:
+            return False
         self.ts = self.mzdatetime.timestamp() - (self.ageoff_hour_limit * 60)
-        if not self.ts:
-            return rtn
-        if self._ageOff(parent="", r=self.r, rtn=rtn):
-            self._getStringRepresentation(
-                parent="", r=self.r, rtn=rtn, leaves=True, values=True)
+        r_changed = self.r_changed
+        self.r_changed = False
+        if self._ageOff(r=self.r):
+            self.r_changed = True
             self.r = {}
+        rtn = self.r_changed
+        self.r_changed = r_changed
         return rtn
 
-    def _ageOff(self, parent: str, r: dict, rtn: list) -> bool:
+    def _ageOff(self, r: dict) -> bool:
         t = r["t"]
         v = r["v"]
         if t == "list":
             if r["ts"] < self.ts:
                 return True
-            return self._ageOff(parent=parent + ".list", r=v, rtn=rtn)
+            if self._ageOff(r=v):
+                raise Exception("Aged off list contents but not list?")
+            return False
         if t == "dict":
             if r["ts"] < self.ts:
                 return True
             lst = []
             for f in v["R"]:
-                if self._ageOff(parent=parent + ".dict.R", r=v["R"][f],
-                                rtn=rtn):
+                if self._ageOff(r=v["R"][f]):
                     lst.append(f)
             for f in lst:
-                self._getStringRepresentation(
-                    parent=parent + ".dict.R", r=v["R"][f], rtn=rtn,
-                    leaves=True, values=True)
+                self.r_changed = True
                 del v["R"][f]
             lst = []
             for f in v["O"]:
-                if self._ageOff(parent=parent + ".dict.O", r=v["O"][f],
-                                rtn=rtn):
+                if self._ageOff(r=v["O"][f]):
                     lst.append(f)
             for f in lst:
-                self._getStringRepresentation(
-                    parent=parent + ".dict.O", r=v["O"][f], rtn=rtn,
-                    leaves=True, values=True)
+                self.r_changed = True
                 del v["O"][f]
             return False
         if t == "switch":
@@ -658,40 +788,29 @@ class SchemaDiscovery():
             for c in v:
                 lst = []
                 for f in c["S"]:
-                    if self._ageOff(
-                            parent=parent + "switch.S", r=c["S"][f], rtn=rtn):
+                    if self._ageOff(r=c["S"][f]):
                         lst.append(f)
                 for f in lst:
-                    self._getStringRepresentation(
-                        parent=parent + "switch.S", r=c["S"][f], rtn=rtn,
-                        leaves=True, values=True)
+                    self.r_changed = True
                     del c["S"][f]
                     raise Exception(
-                        "Aging odd selected fields, must rebuild the switch")
+                        "Aged off selected field, must rebuild the switch")
                     # TODO: rebuild switch or should the case be deleted?
                 if c["R"]:
                     lst = []
                     for f in c["R"]:
-                        if self._ageOff(
-                                parent=parent + "switch.R", r=c["R"][f],
-                                rtn=rtn):
+                        if self._ageOff(r=c["R"][f]):
                             lst.append(f)
                     for f in lst:
-                        self._getStringRepresentation(
-                            parent=parent + "switch.R", r=c["R"][f],
-                            rtn=rtn, leaves=True, values=True)
+                        self.r_changed = True
                         del c["R"][f]
                 if c["O"]:
                     lst = []
                     for f in c["O"]:
-                        if self._ageOff(
-                                parent=parent + "switch.O", r=c["O"][f],
-                                rtn=rtn):
+                        if self._ageOff(r=c["O"][f]):
                             lst.append(f)
                     for f in lst:
-                        self._getStringRepresentation(
-                            parent=parent + "switch.O", r=c["O"][f],
-                            rtn=rtn, leaves=True, values=True)
+                        self.r_changed = True
                         del c["O"][f]
             return False
         return r["ts"] < self.ts
@@ -775,12 +894,17 @@ class SchemaDiscovery():
         oldjs = SchemaDiscovery(debug=False)
         if args.input:
             for fn in args.input.split(","):
+                filename, file_extension = os.path.splitext(fn)
+                if file_extension == "json":
+                    p = JSONParser()
+                elif file_extension == "xml":
+                    p = XMLParser()
+                elif file_extension == "csv":
+                    p = CSVParser()
                 if args.debug:
                     print("Loading " + fn)
-                with open(fn, "r") as fp:
-                    js.load(json.load(fp))
-                with open(fn, "r") as fp:
-                    js2.load2(json.load(fp))
+                js.load(p.toJSON(fn))
+                js2.load(p.toJSON(fn))
             print(js.dumps())
             print(js2.dumps())
             return

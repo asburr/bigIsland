@@ -5,10 +5,14 @@ from discovery.src.parser import Parser
 
 class JSONParser(Parser):
     def parse(self, file: str) -> list:
+        j = self.toJSON(file)
+        print(j)
+        
+    def toJSON(self, file: str) -> any:
         with open(file, "r") as f:
             j = json.load(f)
             j = self._wireshark(j)
-            print(j)
+            return j
 
     def _wireshark(self, obj: any) -> any:
         """Example of wireshark field names that contain values.

@@ -22,12 +22,14 @@ example, field(test) is seen three times, and the second time is a list.
                'test2': [{'_val_': '456'}, {'_val_': '789'}]}}
     """
     def parse(self, file: str) -> list:
-        root = ET.parse(file).getroot()
-        j = {root.tag: self._parse(root)}
+        j = self.toJSON(file)
         print(j)
 
-    def _parse(self, root: ET.Element) -> any:
-        print(root.tag + "=" + root.text)
+    def toJSON(self, file: str) -> any:
+        root = ET.parse(file).getroot()
+        return {root.tag: self._toJSON(root)}
+    
+    def _toJSON(self, root: ET.Element) -> any:
         tagcnt = {}
         j = {}
         if len(root.attrib):
@@ -43,24 +45,24 @@ example, field(test) is seen three times, and the second time is a list.
                         tag = child.tag + str(tagcnt[tag])
                     v = j[tag]
                     if isinstance(v,list):
-                        v.append(self._parse(child))
+                        v.append(self._toJSON(child))
                     else:
-                        j[tag] = [v, self._parse(child)]
+                        j[tag] = [v, self._toJSON(child)]
                 else:
                     if tag in j:  # duplicate field
                         tagcnt[tag] += 1
                         tag = child.tag + str(tagcnt[tag])                        
-                    j[tag] = self._parse(child)
+                    j[tag] = self._toJSON(child)
                 tagcnt[tag] = 1
                 lasttag = child.tag
-            print(j)
             return j
         v = root.text
         if not v.strip():
             v = None
-        j["_val_"] = v
-        print(j)
-        return j
+        if j:
+            j["_val_"] = v
+            return j
+        return v
 
     @staticmethod
     def main():
