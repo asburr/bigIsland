@@ -20,17 +20,17 @@ class JSONStats:
     """
     stats = {
         "<fieldname>": {
-            "count": <occ>,
-            "example": <example>,
-            "datatypes": {
+            "c": <occ>,
+            "e": <example>,
+            "dt": {
                 "<datatype>": {
-                    "count": <occ>,
-                    "example": <example>
+                    "c": <occ>,
+                    "e": <example>
                }
             },
-            "values": {
+            "v": {
                 "<value>": {
-                    "count": <occ>
+                    "c": <occ>
                 }
             }
         }
@@ -53,28 +53,29 @@ class JSONStats:
         else:
             if label not in self.stats:
                 self.stats[label] = {
-                    "count": 0,
-                    "example": obj,
-                    "datatypes": {},
-                    "values": {}
+                    "c": 0,
+                    "e": obj,
+                    "dt": {},
+                    "v": {}
                 }
             d = self.stats[label]
-            d["count"] += 1
-            t = MIsType.isType(label, type(obj), obj)
-            dt = d["datatypes"]
-            if t not in dt:
-                dt[t] = {
-                    "count": 0,
-                    "example": obj
-                }
-            d = dt[t]
-            d["count"] += 1
-            if label in self.values:
-                dv = d["values"]
-                if obj not in dv:
-                    dv[obj] = {"count": 0}
-                d = dv[obj]
-                d["count"] += 1
+            d["c"] += 1
+            t = MIsType.isType(label, type(obj), str(obj))
+            if t is not None:
+                dt = d["dt"]
+                if t not in dt:
+                    dt[t] = {
+                        "c": 0,
+                        "e": obj
+                    }
+                d = dt[t]
+                d["c"] += 1
+                if label in self.values:
+                    dv = d["v"]
+                    if obj not in dv:
+                        dv[obj] = {"c": 0}
+                    d = dv[obj]
+                    d["c"] += 1
 
     def merge(self, other: "JSONStats") -> None:
         for k, v in other.stats:
@@ -82,19 +83,19 @@ class JSONStats:
                 self.stats[k] = other.v
             else:
                 d = self.stats[k]
-                d["count"] += v["count"]
-                dt = d["datatypes"]
-                for t, tv in v["datatypes"]:
+                d["c"] += v["c"]
+                dt = d["dt"]
+                for t, tv in v["dt"]:
                     if t not in dt:
                         dt[t] = tv
                     else:
-                        dt[t]["count"] += tv["count"]
-                dv = d["values"]
-                for v, vv in v["values"]:
+                        dt[t]["c"] += tv["c"]
+                dv = d["v"]
+                for v, vv in v["v"]:
                     if v not in dv:
                         dv[v] = vv
                     else:
-                        dv["count"] += vv["count"]
+                        dv["c"] += vv["c"]
 
 
 class JSONParser(Parser):
