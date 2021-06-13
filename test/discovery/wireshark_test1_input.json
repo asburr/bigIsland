@@ -1,0 +1,18 @@
+[
+{
+    "Queries": {
+        "bolt.dropbox.com: type A": {
+            "dns.qry.name": "bolt.dropbox.com",
+            "extensions_padding_data": "00:00",
+            "2extensions_padding_padding": "00",
+            "3extensions_padding_unused": "aa:0f:ff:12",
+            "dt1": "192.168.1.1",
+            "dns.qry.type": "1"
+        },
+        "bolt.dropbox.com: type B": {
+            "dns.qry.name": "bolt.dropbox.com",
+            "dns.qry.type": "2"
+        }
+    }
+}
+]
