@@ -9,9 +9,13 @@
             "dt1": "192.168.1.1",
             "dns.qry.type": "1"
         },
-        "bolt.dropbox.com: type B": {
-            "dns.qry.name": "bolt.dropbox.com",
+        "bolt.dropbox2.com: type B": {
+            "dns.qry.name": "bolt.dropbox2.com",
             "dns.qry.type": "2"
+        },
+        "bolt.dropbox3.com: type C": {
+            "dns.qry.name": "bolt.dropbox2.com",
+            "dns.qry.type": "3"
         }
     }
 }
