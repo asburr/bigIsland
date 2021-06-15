@@ -82,10 +82,11 @@ import json
 import traceback
 from magpie.src.mistype import MIsType
 from magpie.src.mzdatetime import MZdatetime
-from discovery.src.parser import Parser
-from discovery.src.JSONParser import JSONParser
-from discovery.src.XMLParser import XMLParser
-from discovery.src.CSVParser import CSVParser
+import sys
+from parser import Parser
+from JSONParser import JSONParser
+from XMLParser import XMLParser
+from CSVParser import CSVParser
 import os
 
 
@@ -93,7 +94,7 @@ class IncompatibleException(Exception):
     pass
 
 
-class SchemaDiscovery():
+class SchemaDiscovery:
 
     def __init__(self, debug: bool = False, ageoff_hour_limit: int = 0,
                  time_fields: list = None):
@@ -895,12 +896,14 @@ class SchemaDiscovery():
         if args.input:
             for fn in args.input.split(","):
                 filename, file_extension = os.path.splitext(fn)
-                if file_extension == "json":
+                if file_extension == ".json":
                     p = JSONParser()
-                elif file_extension == "xml":
+                elif file_extension == ".xml":
                     p = XMLParser()
-                elif file_extension == "csv":
-                    p = CSVParser()
+                elif file_extension == ".csv":
+                    p = CSVParser('excel')
+                else:
+                    raise Exception("unsupported file type " + file_extension)
                 if args.debug:
                     print("Loading " + fn)
                 js.load(p.toJSON(fn))

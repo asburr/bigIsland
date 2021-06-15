@@ -16,6 +16,7 @@ import argparse
 from discovery.src.parser import Parser
 from magpie.src.mistype import MIsType
 
+
 class JSONStats:
     """
     stats = {
@@ -41,7 +42,7 @@ class JSONStats:
     """
     def __init__(self):
         self.stats = {}
-        self.values = {}
+        self.values = set()
 
     def gatherStats(self, label: str, obj: any) -> None:
         if isinstance(obj, dict):
@@ -66,7 +67,9 @@ class JSONStats:
                 if t not in dt:
                     dt[t] = {
                         "c": 0,
-                        "e": obj
+                        "e": obj,
+                        "dt": {},
+                        "v": {}
                     }
                 d = dt[t]
                 d["c"] += 1
@@ -78,24 +81,28 @@ class JSONStats:
                     d["c"] += 1
 
     def merge(self, other: "JSONStats") -> None:
-        for k, v in other.stats:
+        for k, v in other.stats.items():
             if k not in self.stats:
-                self.stats[k] = other.v
+                self.stats[k] = v
             else:
                 d = self.stats[k]
                 d["c"] += v["c"]
                 dt = d["dt"]
-                for t, tv in v["dt"]:
+                for t, tv in v["dt"].items():
                     if t not in dt:
                         dt[t] = tv
                     else:
                         dt[t]["c"] += tv["c"]
                 dv = d["v"]
-                for v, vv in v["v"]:
+                for v, vv in v["v"].items():
                     if v not in dv:
                         dv[v] = vv
                     else:
                         dv["c"] += vv["c"]
+
+    def addValues(self, valueFieldNames: list) -> None:
+        for valueFieldName in valueFieldNames:
+            self.values.add(valueFieldName)
 
 
 class JSONParser(Parser):
@@ -118,6 +125,9 @@ class JSONParser(Parser):
     def getStats(self) -> JSONStats:
         self.stats.gatherStats("", self.j)
         return self.stats
+
+    def addValues(self, valueFieldNames: list) -> None:
+        self.stats.addValues(valueFieldNames)
 
     # Wireshark has hexdumps within fields.
     def ishexdump(self, s: str) -> bool:
@@ -197,8 +207,13 @@ class JSONParser(Parser):
         parser = argparse.ArgumentParser(description="JSON Parser")
         parser.add_argument('input', help="input file")
         parser.add_argument('-o', '--output', help="expected output file")
+        parser.add_argument('-v', '--values', help="name of file with a list of fields whose values to track")
         args = parser.parse_args()
         p = JSONParser()
+        p2 = JSONParser()
+        if args.values:
+            with open(args.values, "r") as f:
+                p.addValues(json.load(f))
         j = p.toJSON(file=args.input)
         if args.output:
             with open(args.output, "r") as f:
@@ -212,6 +227,8 @@ class JSONParser(Parser):
         else:
             print(j)
         print(p.getStats().stats)
+        p2.stats.merge(p.stats)
+        print(p2.stats.stats)
 
 
 if __name__ == "__main__":
