@@ -7,10 +7,36 @@
         "dns.qry.type": "1",
         "__ws_summary": "bolt.dropbox.com: type A"
       }, {
-        "dns.qry.name": "bolt.dropbox.com",
+        "dns.qry.name": "bolt.dropbox2.com",
         "dns.qry.type": "2",
-        "__ws_summary": "bolt.dropbox.com: type B"
+        "__ws_summary": "bolt.dropbox2.com: type B"
+      }, {
+        "dns.qry.name": "bolt.dropbox2.com",
+        "dns.qry.type": "3",
+        "__ws_summary": "bolt.dropbox3.com: type C"
       }
     ]
-  }
+  },
+  {
+      "json": {
+          "json.object": {
+              "record": {
+                  "json.object": [
+                      {
+                          "v1": {
+                                "json.value.string": "12345",
+                                "json.key": "v1"
+                            }
+                        }, {
+                            "v2": {
+                                "json.value.number": 123,
+                                "json.key": "v2"
+                            }
+                        }
+                    ],
+                    "json.key": "record"
+                }
+            }
+        }
+    }
 ]

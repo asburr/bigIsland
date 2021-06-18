@@ -1,0 +1,3 @@
+[
+    {"guard": "json", "replace": "json.member", "value": "json.key"}
+]

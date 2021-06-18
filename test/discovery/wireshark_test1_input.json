@@ -18,5 +18,27 @@
             "dns.qry.type": "3"
         }
     }
+},
+{
+    "json": {
+        "json.object": {
+            "json.member": {
+                "json.object": [
+                    {
+                        "json.member": {
+                            "json.value.string": "12345",
+                            "json.key": "v1"
+                        }
+                    }, {
+                        "json.member": {
+                            "json.value.number": 123,
+                            "json.key": "v2"
+                        }
+                    }
+                ],
+                "json.key": "record"
+            }
+        }
+    }
 }
 ]
