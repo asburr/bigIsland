@@ -28,6 +28,9 @@
                         "json.member": {
                             "json.value.string": "12345",
                             "json.key": "v1"
+                        },
+                        "data-text-lines": {
+                          "wert": "quert"
                         }
                     }, {
                         "json.member": {
@@ -37,6 +40,31 @@
                     }
                 ],
                 "json.key": "record"
+            }
+        }
+    }
+},
+{
+    "protocol": {
+        "length": 123,
+        "protocol.msg.code": "ping",
+        "protocol.param": {
+            "protocol.param.code": "pong",
+            "protocol.param.flags": "0x12"
+        }
+    }
+},
+{
+    "_source": {
+        "layers": {
+            "frame": {
+                "frame.interface_id": "0"
+            },
+            "eth": {
+                "eth.dst": "3c:77:e6:18:f7:6d"
+            },
+            "ip": {
+                "ip.version": "4"
             }
         }
     }

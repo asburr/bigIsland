@@ -1,3 +1,5 @@
 [
-    {"guard": "json", "replace": "json.member", "value": "json.key"}
+    {"Rguard": "json", "Rreplace": "json.member", "Rvalue": "json.key"},
+    {"Nguard": "protocol", "Nvalue": "protocol.msg.code"},
+    {"Nguard": "protocol.param", "Nvalue": "protocol.param.code"}
 ]
