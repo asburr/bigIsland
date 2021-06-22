@@ -67,12 +67,10 @@ class JSONStats:
                 if t not in dt:
                     dt[t] = {
                         "c": 0,
-                        "e": obj,
-                        "dt": {},
-                        "v": {}
+                        "e": obj
                     }
-                d = dt[t]
-                d["c"] += 1
+                dt = dt[t]
+                dt["c"] += 1
                 if label in self.values:
                     dv = d["v"]
                     if obj not in dv:
@@ -111,8 +109,14 @@ class JSONParser(Parser):
         self.j = {}
         self.valueLabels = {}
         self.parent = None
-        self.valueLabelStates = ["guard", "replace", "value", "end"]
+        self.valueLabelStates = {
+            "Rguard": "Rreplace", "Rreplace": "Rvalue", "Rvalue": "end",
+            "Nguard": "Nvalue", "Nvalue": "end",
+            "nguard": "end",
+        }
         self.valueLabelNodes = []
+        self.ignores = set()
+        self.nests = set()
 
     def parse(self, file: str) -> list:
         self.j = self.toJSON(file)
@@ -145,32 +149,53 @@ class JSONParser(Parser):
     #  { “json”: {“json.object”: {"json.member": {"json.value.number": 123,"json.key": "v2"}}}}
     # Becomes,
     #  { “json”: {“json.object”: {"v2": {"json.value.number": 123}}}}
-    
+
     # Add the initial state (guard) for the value labels.
     def addValueLabels(self, valueLabels: list) -> None:
-        states = self.valueLabelStates[:-1]
         for valueLabel in valueLabels:
             if True:  # Sanity checks.
-                for state in states:
-                    if state not in valueLabel:
-                        raise Exception("Missing " + state + " in valuelabel "+
-                                        str(valueLabel))
+                pstate = None
                 for state in valueLabel.keys():
-                    if state not in states:
-                        raise Exception("New state " + state + " in "
+                    if pstate:
+                        nstate = self.valueLabelStates[pstate]
+                        if state != nstate:
+                            raise Exception("Unknown trans " + pstate + " to "+
+                                            nstate + " in valuelabel " +
+                                            str(valueLabel))
+                    pstate = state
+                    if pstate not in self.valueLabelStates:
+                        raise Exception("Unknown state " + pstate + " in "
                                         "valuelabel " + str(valueLabel))
-            label = valueLabel["guard"]
+            if "Rguard" in valueLabel:
+                state = "Rguard"
+            elif "Nguard" in valueLabel:
+                state = "Nguard"
+            elif "nguard" in valueLabel:
+                state = "nguard"
+            else:
+                raise Exception("Unknown state in valuelabel " +
+                                str(valueLabel))
+            label = valueLabel[state]
             if label not in self.valueLabels:
                 self.valueLabels[label] = []
             n = {
                 "labels": valueLabel,
-                "state": "guard",
+                "state": state,
                 "parent": None,
                 "replaceField": "",
-                "renameLabels": []
+                "renameLabels": [],
+                "nestedLabels": []
             }
             n["guardNode"] = n
             self.valueLabels[label].append(n)
+
+    def addIgnore(self, ignores: list) -> None:
+        for field in ignores:
+            self.ignores.add(field)
+
+    def addNest(self, nests: list) -> None:
+        for field in nests:
+            self.nests.add(field)
 
     # Wireshark has hexdumps within fields.
     def ishexdump(self, s: str) -> bool:
@@ -246,13 +271,36 @@ class JSONParser(Parser):
             obj = self._wiresharkDict(obj)
         if isinstance(obj, dict):
             fields =  list(obj.keys())
+            delField = []
             for field in fields:
+                if field in self.ignores:
+                    delField.append(field)
+                    continue
+                if field in self.nests:
+                    parentobj = obj[field]
+                    nxtfields = list(parentobj.keys())
+                    pobj = parentobj[nxtfields[0]]
+                    for nxtfield in nxtfields[1:]:
+                        nxtobj = parentobj[nxtfield]
+                        del parentobj[nxtfield]
+                        # nxtfield = field + "_" + nxtfield
+                        if not isinstance(nxtobj, dict):
+                            raise Exception(
+                                "nesting field is not a dict " + nxtfield +
+                                " " + str(type(nxtobj))
+                                )
+                        if nxtfield in pobj:
+                            raise Exception(
+                                "nesting field " + nxtfield + " exists in " +
+                                str(pobj))
+                        pobj[nxtfield] = nxtobj
+                        pobj = nxtobj
                 if field in self.valueLabels:
                     # Use recently added node against this label.
                     n = self.valueLabels[field][-1]
-                    statei = self.valueLabelStates.index(n["state"])
-                    nextState = self.valueLabelStates[statei+1]
-                    if nextState == "end": # Replace the label.
+                    state = n["state"]
+                    nextState = self.valueLabelStates[state]
+                    if nextState == "end":
                         parent = n["parent"]
                         if parent:
                             if (isinstance(obj[field], dict) or
@@ -271,12 +319,18 @@ class JSONParser(Parser):
                             if newfield in parent:
                                 raise Exception(newfield + " exists in " +
                                                 str(parent))
-                            n["guardNode"]["renameLabels"].append(
-                                    [parent, oldfield, newfield])
+                            if state == "Rvalue":  # Replace
+                                n["guardNode"]["renameLabels"].append(
+                                        [parent, oldfield, newfield])
+                            elif state == "Nvalue":  # Nest structures
+                                n["guardNode"]["nestedLabels"].append(
+                                        [parent, oldfield, newfield])
+                            else:
+                                raise Exception("unexpected state " + n["state"])
                             # Ignore multiple nested labels.
                             n["parent"] = None
                         else:  # Second label is ignored.
-                            pass
+                            obj[field] = self._walk(obj[field])
                     else:
                         nextLabel = n["labels"][nextState]
                         if nextLabel not in self.valueLabels:
@@ -299,16 +353,22 @@ class JSONParser(Parser):
                                     str(nextn["labels"]) +
                                     " did not match, no replacement done!"
                             )
-                    if n["state"] == "guard":
-                        # Here is the most effient save place to change the
-                        # fields in sub-tree. Sub-tree cannot be changed at
-                        # state == "end" that's within a loop over the
-                        # sub-tree's fields that need to change.
+                    # Here is the most effient save place to change the
+                    # fields in sub-tree. Sub-tree cannot be changed at
+                    # state == "end" that's within a loop over the
+                    # sub-tree's fields that need to change.
+                    if n["state"] == "Rguard":
                         for parent, oldfield, newfield in n["renameLabels"]:
                             parent[newfield] = parent[oldfield]
                             del parent[oldfield]
+                    if n["state"] == "Nguard":
+                        for parent, oldfield, newfield in n["nestedLabels"]:
+                            temp = parent[oldfield]
+                            parent[oldfield] = {newfield: temp}
                 else:
                     obj[field] = self._walk(obj[field])
+            for field in delField:
+                del obj[field]
             return obj
         elif isinstance(obj, list):
             return [self._walk(v) for v in obj]
@@ -322,6 +382,8 @@ class JSONParser(Parser):
         parser.add_argument('-o', '--output', help="expected output file")
         parser.add_argument('-v', '--values', help="name of file with a list of fields whose values to track")
         parser.add_argument('-l', '--valuelabels', help="name of file with a list of <blocklabel>,<keylabel>,<replacelabel>")
+        parser.add_argument('-i', '--ignore', help="name of file with a list of fields to ignore")
+        parser.add_argument('-n', '--nest', help="name of file with list of fields to nest")
         args = parser.parse_args()
         p = JSONParser()
         p2 = JSONParser()
@@ -331,6 +393,12 @@ class JSONParser(Parser):
         if args.valuelabels:
             with open(args.valuelabels, "r") as f:
                 p.addValueLabels(json.load(f))
+        if args.ignore:
+            with open(args.ignore, "r") as f:
+                p.addIgnore(json.load(f))
+        if args.nest:
+            with open(args.nest, "r") as f:
+                p.addNest(json.load(f))
         j = p.toJSON(file=args.input)
         if args.output:
             with open(args.output, "r") as f:
