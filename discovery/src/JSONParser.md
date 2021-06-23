@@ -250,3 +250,9 @@ Example output using ignore,
 ]
 ```
 
+## valueprune
+
+wireshark x509 is reported in one layer but is reported many times in
+frame.protocols, for example, eth:ethertype:ip:tcp:ssl:x509sat:x509sat.
+
+This option prunes the value. format is field, 

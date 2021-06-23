@@ -108,6 +108,7 @@ class JSONParser(Parser):
         self.stats = JSONStats()
         self.j = {}
         self.valueLabels = {}
+        self.truncs = {}
         self.parent = None
         self.valueLabelStates = {
             "Rguard": "Rreplace", "Rreplace": "Rvalue", "Rvalue": "end",
@@ -124,9 +125,24 @@ class JSONParser(Parser):
         self.stats.gatherStats("", self.j)
         print(self.stats.stats)
         
+    # A JSON dict with duplicate keys is loaded into a list of values.
+    @staticmethod
+    def dict_duplicate_keys_to_list(ordered_pairs):
+        d = {}
+        for k, v in ordered_pairs:
+            if k in d:
+                if type(d[k]) is list:
+                    d[k].append(v)
+                else:
+                    d[k] = [d[k],v]
+            else:
+               d[k] = v
+        return d
+
     def toJSON(self, file: str) -> any:
         with open(file, "r") as f:
-            self.j = json.load(f)
+            self.j = json.load(f,
+                               object_pairs_hook=self.dict_duplicate_keys_to_list)
             self.renameLabels = []
             self.j = self._walk(self.j)
             return self.j
@@ -197,6 +213,10 @@ class JSONParser(Parser):
         for field in nests:
             self.nests.add(field)
 
+    def addTrunc(self, truncs: dict) -> None:
+        for field, value in truncs.items():
+            self.truncs[field] = value
+
     # Wireshark has hexdumps within fields.
     def ishexdump(self, s: str) -> bool:
         i = 0
@@ -266,6 +286,34 @@ class JSONParser(Parser):
                 del obj[field]
         return obj
 
+    def decodehttpparam(self, obj: dict, field: str, v: str, ) -> None:
+        for p in v.split("; "):
+            try:
+                pn, pv = p.split(":")
+            except:
+                continue
+            pn = pn.replace("-","_").strip().lower()
+            if pn not in obj:
+                obj[pn] = pv.strip()
+
+    def decodehttpparams(self, obj: dict) -> None:
+        for field in list(obj.keys()):
+            if field in ["http.response.line", "http.request.line"]:
+                v = obj[field]
+                del obj[field]
+                if isinstance(v, list):
+                    for p in v:
+                        if isinstance(p, str):
+                            self.decodehttpparam(obj, field, p)
+                        else:
+                            raise Exception("http param " + field + " is " +
+                                            str(type(p)))
+                elif isinstance(v, str):
+                    self.decodehttpparam(obj, field, v)
+                else:
+                    raise Exception("http param " + field + " is " +
+                                    str(type(v)))
+
     def _walk(self, obj: any) -> any:
         if isinstance(obj, dict):
             obj = self._wiresharkDict(obj)
@@ -276,6 +324,16 @@ class JSONParser(Parser):
                 if field in self.ignores:
                     delField.append(field)
                     continue
+                if field == "http":
+                    self.decodehttpparams(obj[field])
+                if field in self.truncs:
+                    v = obj[field]
+                    if not isinstance(v, str):
+                        raise Exception("trunc field " + field + " is " +
+                                        str(type(v)))
+                    t = self.truncs[field]
+                    if t in v:
+                        obj[field] = v[:v.index(t)+len(t)]
                 if field in self.nests:
                     parentobj = obj[field]
                     nxtfields = list(parentobj.keys())
@@ -384,6 +442,7 @@ class JSONParser(Parser):
         parser.add_argument('-l', '--valuelabels', help="name of file with a list of <blocklabel>,<keylabel>,<replacelabel>")
         parser.add_argument('-i', '--ignore', help="name of file with a list of fields to ignore")
         parser.add_argument('-n', '--nest', help="name of file with list of fields to nest")
+        parser.add_argument('-t', '--trunc', help="name of file with list of fields, value to be truncated beyond value")
         args = parser.parse_args()
         p = JSONParser()
         p2 = JSONParser()
@@ -399,6 +458,9 @@ class JSONParser(Parser):
         if args.nest:
             with open(args.nest, "r") as f:
                 p.addNest(json.load(f))
+        if args.trunc:
+            with open(args.trunc, "r") as f:
+                p.addTrunc(json.load(f))
         j = p.toJSON(file=args.input)
         if args.output:
             with open(args.output, "r") as f:
