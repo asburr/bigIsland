@@ -4,14 +4,14 @@
 import operator
 
 
-class MWildString(str):
+class MWildString:
     
-    def __new__(cls, content: str):
-      return str.__new__(cls, content)
+    def __init__(self, content: str):
+        self.s = content
   
     def __cmp(self, other: 'MWildString') -> int:
-        i1 = self.__iter__()
-        i2 = other.__iter__()
+        i1 = self.s.__iter__()
+        i2 = other.s.__iter__()
         c1 = next(i1, None)
         c2 = next(i2, None)
         while c1 and (
@@ -32,7 +32,10 @@ class MWildString(str):
         if c2 > c1:
             return -1
         return 0
-        
+
+    def __hash__(self):
+        return self.s.__hash__()
+    
     def __eq__(self, other: 'MWildString') -> bool:
         return self.__cmp(other) == 0
 
@@ -47,6 +50,12 @@ class MWildString(str):
 
     def __le__(self, other: 'MWildString') -> bool:
         return self.__cmp(other) <= 0
+
+    def str(self) -> str:
+        return self.s
+
+    def repr(self) -> str:
+        return self.s
 
     @staticmethod
     def main():
