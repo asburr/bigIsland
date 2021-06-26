@@ -1,4 +1,28 @@
 #!/usr/bin/env python3
+#
+# Wrapper around python threads.
+#
+# Why python threads?
+# Threading makes better use of the CPU in the case when a program is
+# interrupted by writing to output or reading from input and the CPU is idle
+# while the program is waiting for those operations to complete. 
+# Multiple threads runs multiple programs in a interleaved fashion such that
+# another programs will run when the currently running program blocks waiting
+# for input or output.
+#
+# Why MThreads?
+# MThreads determines the number of threads that is needed to keep the CPU
+# busy while not overloading the CPU. Too much CPU usage and the threads run
+# inefficently as they compete for the same CPU. Too less threads and the CPU
+# is underutilized. CPU utilization is critical on platforms with horizontal
+# pod autoscalers, like Kubernetes. Too little CPU usage and the scalers
+# wont ever be triggered, too much cpu usage overload the pods.
+#
+# Okay, what does MThreads do?
+# MThreads creates an additional thread that measures idleness. MThreads
+# creates threads up until the idle threashold is reached. MThreads deletes
+# threads when the CPU is too busy. 
+#
 from time import sleep
 import threading
 import logging
@@ -113,10 +137,13 @@ class MThreadIdle(threading.Thread):
 
 
 class MThreads:
-    # idleDelay: Delay can be yield to other threads without wiat(0) or yield with a wait.
+    # idleDelay: Delay can be yield to other threads without wait(0) or yield with a wait.
     # sampleDuration: duration is the sampling window for determining the next idle.
     # idlePercentageGoal: percentage of the CPU to remain idle on average.
-    def __init__(self, idleDelay: float = 0.01, sampleDuration: float = 2.0, idlePercentageGoal: int = 20):
+    def __init__(self,
+                 idleDelay: float = 0.01,
+                 sampleDuration: float = 2.0,
+                 idlePercentageGoal: int = 20):
         self.maxThreadLogged = False
         self.logger = MLogger.getLogger()
         self.threads = []
@@ -130,10 +157,13 @@ class MThreads:
     def threadCount(self) -> int:
         return len(self.threads)
 
-    def startup(self, threadClass: any, threadCfg: dict, minThreads: int, maxThreads: int) -> None:
+    def startup(self, threadClass: any,
+                threadCfg: dict,
+                minThreads: int, maxThreads: int) -> None:
         if minThreads > maxThreads:
             raise Exception(
-                "MThreads minthreads=%d maxThreads=%d must be more than 2 difference" % (minThreads, maxThreads)
+                "MThreads minthreads=%d maxThreads=%d" %
+                (minThreads, maxThreads)
             )
         self.threadClass = threadClass
         self.threadCfg = threadCfg

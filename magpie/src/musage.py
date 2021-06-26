@@ -36,7 +36,7 @@ class MUsage():
             raise Exception("no memory inc during initialization")
 
     def memoryUsage(self) -> int:
-        return psutil.virtual_memory().percent
+        return int(psutil.virtual_memory().percent)
 
     def memoryFree(self) -> int:
         return int(psutil.virtual_memory().available * 100 /
@@ -63,6 +63,8 @@ class MUsage():
             self.cpuidle[1] = self.cpuidle[2]
         dt = (self.cpuusage[2] - self.cpuusage[0])
         di = (self.cpuidle[2] - self.cpuidle[0])
+        print(self.cpuusage)
+        print(self.cpuidle)
         return dt+di, dt, di
 
     def cpuUsage(self) -> int:
@@ -76,7 +78,8 @@ class MUsage():
         if t:
             return int(i * 100 / t)
         return 0
-        
+
+    # dir is the partition root directory.
     def diskUsage(self, dir: str) -> int:
         u = psutil.disk_usage(dir)
         return int(u.used * 100 / u.total)
