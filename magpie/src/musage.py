@@ -1,3 +1,15 @@
+# This file is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This file is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# See the GNU General Public License, <https://www.gnu.org/licenses/>.
+#
 # MUsage is a wrapper for psutil, providing six functions that return
 # percentage usage:
 #  memoryUsage(), memoryFree()
@@ -63,8 +75,6 @@ class MUsage():
             self.cpuidle[1] = self.cpuidle[2]
         dt = (self.cpuusage[2] - self.cpuusage[0])
         di = (self.cpuidle[2] - self.cpuidle[0])
-        print(self.cpuusage)
-        print(self.cpuidle)
         return dt+di, dt, di
 
     def cpuUsage(self) -> int:
