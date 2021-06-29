@@ -1,5 +1,17 @@
+# This file is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This file is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# See the GNU General Public License, <https://www.gnu.org/licenses/>.
 from abc import ABC, abstractmethod
-from typing import Iterable
+from sheet.ci import Result
+import pandas as pd
 
 
 class Input(ABC):
@@ -21,9 +33,6 @@ class Input(ABC):
         for key in usage["defaults"].keys():
             if key not in usage["params"]:
                 error += "ERROR " + key + " has a default but not in params\n"
-        for key, val in usage["map"].items():
-            if val not in usage["return"]:
-                error += "ERROR " + val + " is mapped but not in return\n"
         return error
 
     @staticmethod
@@ -31,7 +40,10 @@ class Input(ABC):
     def name() -> str:
         raise Exception("Abstract")
 
-    @staticmethod
     @abstractmethod
-    def exec(params: dict, scratchPad: dict) -> Iterable[dict]:
+    def constraints(self, result: Result) -> str:
+        raise Exception("Abstract")
+        
+    @abstractmethod
+    def exec(self, result: Result, params: dict) -> pd.DataFrame:
         raise Exception("Abstract")

@@ -1,13 +1,24 @@
-#!/usr/bin/env python3
+# This file is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This file is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# See the GNU General Public License, <https://www.gnu.org/licenses/>.
+#
 # CLI for the sheet.
 import sys
 import os
 import json
-import re
 import pandas as pd
 # from sheet.input import Input
 import argparse
 from cmd2 import Cmd, with_argparser
+from sheet.result import Result
 import traceback
 try:
     import sheet.inputs
@@ -19,23 +30,6 @@ except NameError or SyntaxError:
     print("There are syntax errors in the inputs plugins, pls debug")
     traceback.print_exc()
     sys.exit(1)
-
-
-class Result():
-    def __init__(self, df: pd.DataFrame, qn: str, p: dict):
-        self.df = df
-        self.qn = qn
-        self.params = p
-        
-    def print(self):
-        if self.qn == "_filter":
-            print("Filter")
-        else:
-            print("Query: " + self.qn)
-        print("Params:")
-        for k, v in self.params.items():
-            print("  " + k + "=" + str(v))
-        print("result count: " + str(len(self.df)))
 
 
 class Ci(Cmd):
@@ -55,7 +49,7 @@ class Ci(Cmd):
         for inp in sheet.inputs.ALL:
             error = inp.checkUsage(inp.usage())
             if error:
-                print("Error in module " + inp.name() + ":\n" + error)
+                print("Error in module \"" + inp.name() + "\":\n" + error)
                 exit(1)
             if inp.name():
                 self.query[inp.name()] = inp
@@ -84,41 +78,65 @@ class Ci(Cmd):
                 self.context[param]["Value"] = input(prompt)
                 if not self.context[param]["value"]:
                     self.context[param]["value"] = default
+                if not self.context[param]["value"]:
+                    return
             elif ptype == "pathi":
                 # self.context[param] = self.read_input(prompt=prompt)
                 self.context[param]["value"] = input(prompt)
                 if not self.context[param]["value"]:
                     self.context[param]["value"] = default
-                while not os.path.exists(self.context[param]["value"]):
+                while True:
+                    try:
+                        if os.path.exists(self.context[param]["value"]):
+                            break
+                    except Exception:
+                        pass
                     print("Cannot find file " + self.context[param]["value"])
                     # self.context[param] = self.read_input(prompt=prompt)
                     self.context[param]["value"] = input(prompt)
                     if not self.context[param]["value"]:
                         self.context[param]["value"] = default
+                    if not self.context[param]["value"]:
+                        return
             elif ptype == "path":
                 # self.context[param] = self.read_input(prompt=prompt)
                 self.context[param]["value"] = input(prompt)
                 if not self.context[param]["value"]:
                     self.context[param]["value"] = default
-                while not os.path.exists(os.path.dirname(
-                    self.context[param]["value"])
-                ):
+                while True:
+                    try:
+                        if os.path.exists(os.path.dirname(
+                                self.context[param]["value"])
+                        ):
+                            break
+                    except Exception:
+                        pass
                     print("Cannot find directory " +
                           os.path.dirname(self.context[param]["value"]))
                     # self.context[param] = self.read_input(prompt=prompt)
                     self.context[param]["value"] = input(prompt)
                     if not self.context[param]["value"]:
                         self.context[param]["value"] = default
+                    if not self.context[param]["value"]:
+                        return
             elif ptype == "str":
                 # self.context[param] = self.read_input(prompt=prompt)
                 self.context[param]["value"] = input(prompt)
                 if not self.context[param]["value"]:
                     self.context[param]["value"] = default
-            elif ptype == "bool":
-                # self.context[param] = self.read_input(prompt=prompt)
-                self.context[param]["value"] = input(prompt)
                 if not self.context[param]["value"]:
-                    self.context[param]["value"] = default
+                    return
+            elif ptype == "bool":
+                while True:
+                    try:
+                        self.context[param]["value"] = bool(input(prompt))
+                        break
+                    except Exception:
+                        pass
+                    if not self.context[param]["value"]:
+                        self.context[param]["value"] = default
+                    if not self.context[param]["value"]:
+                        return
         pl = {}
         for param in params.keys():
             pl[param] = self.context[param]["value"]
@@ -150,6 +168,9 @@ class Ci(Cmd):
     queryparser = argparse.ArgumentParser()
     queryparser.add_argument('query_name', nargs="?", type=str, const="",
                              help='Run the named query and generate results')
+    queryparser.add_argument(
+        '-t', '--test', action="store_true",
+        help="Test query without saving results")
 
     @with_argparser(queryparser)
     def do_q(self, args):
@@ -172,211 +193,72 @@ class Ci(Cmd):
                     for n in self.query.keys():
                         print(n + "(" + self.shortMapping[n] + ")")
                 return
+            msg = q.constraints()
+            if msg:
+                print(msg)
+                return
             params = self._getParams(q.usage()["params"])
-            columns = list(q.usage()["return"].keys())
-            self.q(qn=q.name(), params=params, columns=columns)
+            self.q(qn=q.name(), params=params, save=not args.test)
         except Exception:
             traceback.print_exc()
             return 0
 
-    def q(self, qn: str, params: dict, columns: dict):
+    def q(self, qn: str, params: dict, save: bool):
         if qn not in self.query:
             print("ERROR: query not found " + qn)
             return
         params["debug"] = self.context["debug"]["value"]
         q = self.query[qn]
-        if columns:
-            result = pd.DataFrame(columns=columns)
-            for r in q.exec(params=params,
-                            scratchPad=self.scratchPad):
-                row = len(result)
-                for k in columns:
-                    result.at[row, k] = r[k]
-            print(str(len(result)) + " results")
-            if len(result):
-                self.savedResults.append(
-                    Result(df=result, qn=qn, p=params))
+        if len(self.savedResults) == 0:
+            savedResult = None
         else:
-            q.exec(params=params, scratchPad=self.scratchPad)
+            savedResult = self.savedResults[-1]
+        df = q.exec(result=savedResult,
+                    params=params,
+                    scratchPad=self.scratchPad)
+        if df:
+            if save:
+                print(str(len(df)) + " results")
+                self.savedResults.append(Result(df=df, qn=qn, p=params))
+            else:
+                print(df)
+        else:
+            print("No results, nothing saved!")
 
     showparser = argparse.ArgumentParser()
     showparser.add_argument(
-        '-R', '--remove_row', nargs="?", type=str, const="",
-        help='Condition(s) to remove the row i.e. a == 1 and b == 2')
-    showparser.add_argument(
-        '-r', '--include_row', nargs="?", type=str, const="",
-        help='Condition(s) to include the row i.e. a < 1 and b > 3')
-    showparser.add_argument(
-        '-C', '--remove_column', nargs="?", type=str, const="",
-        help='Coma separated patterns identifying cols to remove i.e. a_*,b_*')
-    showparser.add_argument(
-        '-c', '--include_column', nargs="?", type=str, const="",
-        help='Coma separated patterns identifying cols to include i.e. *X')
-    # -g/-s removes the cols that are not grouped-by and not summed.
-    showparser.add_argument(
-        '-g', '--group_by_column', nargs="?", type=str, const="",
-        help='Coma separate patterns identifying cols to group-by for (-s)')
-    showparser.add_argument(
-        '-s', '--sum_column', nargs="?", type=str, const="",
-        help='Coma separate patterns identifying numeric cols to sum for (-g)')
-    showparser.add_argument(
-        '-n', '--count_rows', nargs="?", type=str, const="",
-        help='New column name for count of rows in group by (-g)')
+        '-c', '--columns', action="store_true",
+        help="Show column names without showing the rows of data.")
 
     @with_argparser(showparser)
     def do_s(self, args):
-        """Show and/or filter recent results.
-           for example,
-           s -R a == 1 - removes rows where column a has the value 1
-           s -r b == 2 - include rows where column nb has the value 2
-           s -C a_*,b_* - exclude columns where name matched a_* or b_*
-           s -c a_*,b_* - include columns where name matched a_* or b_*
-           s -s b -g a - sum column b partitioned (grouped by) column a 
-           s -n count -g a - count rows partitioned (grouped by) column a
-           """
-        filt = {
-            "remove_row": args.remove_row,
-            "include_row": args.include_row,
-            "remove_column": args.remove_column,
-            "include_column": args.include_column,
-            "group_by_column": args.group_by_column,
-            "sum_column": args.sum_column,
-            "count_rows": args.count_rows
-        }
-        self.s(filt)
-
-    def s(self, filt: dict):
+        """Show recent result."""
         if len(self.savedResults) == 0:
-            print("ERROR: no results")
+            print("No saved results")
             return
         result = self.savedResults[-1]
-        if (not filt["remove_row"] and not filt["include_row"] and
-            not filt["remove_column"] and not filt["include_column"] and
-            not filt["group_by_column"] and not filt["sum_column"]
-        ):
-            print(result.df)
-            return
-        columns = result.df.columns.tolist()
-        df = result.df.copy()
-        if filt["remove_row"]:
-            try:
-                df.query(expr=filt["remove_row"], inplace=True)
-                if df.equals(result.df):
-                    print("ERROR: no column matching " + filt["remove_row"])
-                    return
-            except Exception as e:
-                print("Error in " + filt["remove_row"] + " " + str(e))
-                return
-        if filt["include_row"]:
-            try:
-                df.query(expr=filt["include_row"], inplace=True)
-            except Exception as e:
-                print("Error in " + filt["include_row"] + " " + str(e))
-                return
-        if filt["remove_column"]:
-            try:
-                for pattern in filt["remove_column"].split(","):
-                    pat = re.compile(pattern)
-                    c = 0
-                    for col in columns:
-                        if pat.match(col):
-                            c += 1
-                            df.drop(columns=col, inplace=True)
-                    if not c:
-                        print("ERROR: no column matching " + pattern)
-                        return
-            except Exception as e:
-                print("Error in " + filt["remove_column"] + " " + str(e))
-                return
-        if filt["include_column"]:
-            try:
-                ic = set()
-                for pattern in filt["include_column"].split(","):
-                    pat = re.compile(pattern, re.IGNORECASE)
-                    c = 0
-                    for col in columns:
-                        if pat.match(col):
-                            c += 1
-                            ic.add(col)
-                    if not c:
-                        print("ERROR: no column matching " + pattern)
-                        return
-                for col in columns:
-                    if col not in ic:
-                        df.drop(columns=col, inplace=True)
-            except Exception as e:
-                print("Error in " + filt["include_column"] + " " + str(e))
-                return
-        if filt["group_by_column"] and (
-            filt["sum_column"] or
-            filt["count_rows"]
-        ):
-            try:
-                gb = set()
-                for pattern in filt["group_by_column"].split(","):
-                    pat = re.compile(pattern)
-                    for col in columns:
-                        if pat.match(col):
-                            gb.add(col)
-                if not gb:
-                    print("Error in -g " +
-                          filt["group_by_column"] + " -s " +
-                          " not columns selected")
-                    return
-                if filt["sum_column"]:
-                    sc = set()
-                    for pattern in filt["sum_column"].split(","):
-                        pat = re.compile(pattern)
-                        for col in columns:
-                            if pat.match(col):
-                                sc.add(col)
-                    if not sc:
-                        print("Error in -s " +
-                              filt["sum_column"] + " -s " +
-                              " not columns selected")
-                        return
-                    for col in columns:
-                        if col in gb and col in sc:
-                            print("Error in -g " +
-                                  filt["group_by_column"] + " -s " +
-                                  filt["sum_column"] + " " +
-                                  " select the same col " + col)
-                            return
-                    print(df)
-                    print(gb)
-                    print(sc)
-                    df = df.groupby(list(gb))[list(sc)].sum().reset_index()
-                    print(df)
-                elif filt["count_rows"]:
-                    col = filt["count_rows"]
-                    if col in columns:
-                        print("ERROR: column " + col + " already exists")
-                        return
-                    df = df.groupby(list(gb)).size().reset_index(name=col)
-            except Exception:
-                traceback.print_exc()
-                print("Error in " +
-                      filt["group_by_column"] + " " +
-                      str(filt["sum_column"]) + " " +
-                      str(filt["count_rows"])
-                      )
-                return
-        if df.equals(result.df):
-            print("No new result")
+        if args.cols:
+            print(str(len(result.df.columns)) + " titles:")
+            for i, col in enumerate(result.df.columns):
+                print(str(i) + " " + col)
         else:
-            print(str(len(df)) + " results")
-            self.savedResults.append(
-                Result(df=df, qn="_filter_", p=filt))
+            print(result.df)
 
     deleteparser = argparse.ArgumentParser()
+    deleteparser.add_argument(
+        '-a', '--all', action="store_true",
+        help='Delete all results')
 
     @with_argparser(deleteparser)
     def do_d(self, args):
         """Delete recent result"""
-        if not self.savedResults:
+        if args.all:
+            while self.saveResults:
+                del self.savedResult[-1]
             print("No results")
         else:
-            del self.savedResults[-1]
+            if self.savedResults:
+                del self.savedResults[-1]
             if self.savedResults:
                 print(str(len(self.savedResults[-1].df)) + " results")
             else:
@@ -434,18 +316,13 @@ class Ci(Cmd):
                 analytic = json.load(f)
             self.savedResults = []
             for r in analytic:
-                n = r["qn"]
-                if n == "_filter_":
-                    self.s(params=r["params"], columns=r["columns"])
-                else:
-                    self.q(qn=r["qn"], params=r["params"], columns=r["columns"])
+                self.q(qn=r["qn"], params=r["params"])
         else:
             analytic = []
             for r in self.savedResults:
                 analytic.append({
                     "qn": r.qn,
-                    "params": r.params,
-                    "columns": r.df.columns.tolist()
+                    "params": r.params
                 })
             with open(pname, "w") as f:
                 json.dump(f,analytic)

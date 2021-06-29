@@ -1,10 +1,12 @@
-from typing import Iterable
 from sheet.input import Input
+from sheet.ci import Result
+import pandas as pd
 
 
 class Test(Input):
     def __init__(self, cfg: dict):
         super().__init__(cfg)
+        self.columns = ["retstr", "retint", "retpassword", "retdatetime"]
 
     @staticmethod
     def name() -> str:
@@ -28,22 +30,14 @@ class Test(Input):
                 "count": "123",
                 "password": "should not be a default password",
                 "datetime": "20210210 10:10:10"
-            },
-            "return": {
-                "retstr": "str", "retint": "int", "retpassword": "password", "retdatetime": "datetime"
-            },
-            # Map parameter names to the return names.
-            "map": {
-                "str": "retstr", "int": "retint", "password": "retpassword", "datetime": "retdatetime"
-            },
-            # Query is active when the following constraints are met.
-            "constraints": {
-                "str": "helloworld"
             }
         }
 
-    @staticmethod
-    def exec(params: dict, scratchPad: dict) -> Iterable[dict]:
+    def constraints(self, result: Result) -> str:
+        return ""
+
+    def exec(self, result: Result, params: dict) -> pd.DataFrame:
+        df = pd.DataFrame(columns=self.columns)
         for i in range(params["count"]):
             d = {}
             for field, typ in Test.usage()["return"].items():
@@ -57,4 +51,7 @@ class Test(Input):
                     d[field] = "20211001 11:10:22"
                 else:
                     raise Exception(typ)
-            yield d
+            row = len(result)
+            for k in self.columns:
+                df.at[row, k] = d[k]
+        return df
