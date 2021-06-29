@@ -15,6 +15,7 @@ import json
 import argparse
 from discovery.src.parser import Parser
 from magpie.src.mistype import MIsType
+import re
 
 
 class JSONStats:
@@ -287,9 +288,19 @@ class JSONParser(Parser):
         return obj
 
     def decodehttpparam(self, obj: dict, field: str, v: str, ) -> None:
-        for p in v.split("; "):
+        try:
+            pn, pv = v.split(":")
+        except:
+            return
+        l = pv.split(";")
+        if pn not in obj:
+            obj[pn] = {}
+        obj = obj[pn]
+        if "value" not in obj:
+            obj["value"] = l[0].strip()
+        for p in l[1:]:
             try:
-                pn, pv = p.split(":")
+                pn, pv = p.split("=")
             except:
                 continue
             pn = pn.replace("-","_").strip().lower()
