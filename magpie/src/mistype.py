@@ -31,7 +31,7 @@
 # 1 loops, best of 1: 221 usec per loop
 #
 import ipaddress
-from ipaddress import IPv4Address
+# from ipaddress import IPv4Address
 # import uuid
 import re
 from magpie.src.mzdatetime import MZdatetime
@@ -42,19 +42,19 @@ class MIsType:
     dmPat = re.compile("^(?!-)(([A-Z0-9-]|\\[0-9][0-9]){1,63}[.]?(?<!-))+$", re.IGNORECASE)
 
     @classmethod
-    def isDomain(cls, label: str, json_type: type, value: str) -> str:
+    def isDomain(cls, label: str, json_type: type, value: str) -> (str, dict):
         if json_type != str:
-            return ""
+            return ("",{})
         label_good = False
         for lbl in ["dom", "host", "source"]:
             label_good |= (lbl in label)
         if not label_good:
-            return ""
+            return ("",{})
         if len(value) > 253:
-            return ""
+            return ("",{})
         if cls.dmPat.match(value):
-            return "domain"
-        return ""
+            return ("domain",{})
+        return ("",{})
 
     @staticmethod
     def testDomain():
@@ -90,12 +90,12 @@ class MIsType:
     )
 
     @classmethod
-    def isARN(cls, label: str, json_type: type, value: str) -> str:
+    def isARN(cls, label: str, json_type: type, value: str) -> (str,dict):
         if json_type != str:
-            return ""
+            return ("",{})        
         if cls.ARNPat.match(value):
-            return "arn"
-        return ""
+            return ("arn", {})
+        return ("",{})
 
     @staticmethod
     def testARN():
@@ -129,12 +129,12 @@ class MIsType:
         re.IGNORECASE)
 
     @classmethod
-    def isUA(cls, label: str, json_type: type, value: str) -> str:
+    def isUA(cls, label: str, json_type: type, value: str) -> (str, dict):
         if json_type != str:
-            return ""
+            return ("",{})
         if cls.UAPat.match(value):
-            return "ua"
-        return ""
+            return ("ua", {})
+        return ("",{})
 
     @staticmethod
     def testUA():
@@ -156,17 +156,17 @@ class MIsType:
         re.IGNORECASE)
 
     @classmethod
-    def isEmail(cls, label: str, json_type: type, value: str) -> str:
+    def isEmail(cls, label: str, json_type: type, value: str) -> (str, dict):
         if json_type != str:
-            return ""
+            return ("",{})
         m = cls.emailPat.match(value)
         if m:
             domain = m.groups()[1]
             if cls.isDomain("domain", str, domain):
-                return "email"
+                return ("email", {})
             if cls.isIP("ip", str, domain) == "ip:global":
-                return "email"
-        return ""
+                return ("email", {})
+        return ("",{})
 
     @staticmethod
     def testEmail():
@@ -184,9 +184,9 @@ class MIsType:
 
     # IPaddress
     @classmethod
-    def isIP(cls, _label: str, json_type: type, value: str) -> str:
+    def isIP(cls, _label: str, json_type: type, value: str) -> (str,dict):
         if json_type != str:
-            return ""
+            return ("",{})
         if value.count(".") == 3 or value.count(":") > 1:
             try:
                 ip = ipaddress.ip_address(value)
@@ -197,20 +197,21 @@ class MIsType:
                 # else:
                 #     iptype += ":v6"
                 if ip.is_multicast:
-                    return iptype + ":multicast"
-                if ip.is_private:
-                    return iptype + ":private"
-                if ip.is_global:
-                    return iptype + ":global"
-                if ip.is_unspecified:
-                    return iptype + ":unspecified"
-                if ip.is_reserved:
-                    return iptype + ":reserved"
-                if ip.is_link_local:
-                    return iptype + ":link_local"
+                    iptype += ":multicast"
+                elif ip.is_private:
+                    iptype += ":private"
+                elif ip.is_global:
+                    iptype += ":global"
+                elif ip.is_unspecified:
+                    iptype += ":unspecified"
+                elif ip.is_reserved:
+                    iptype += ":reserved"
+                elif ip.is_link_local:
+                    iptype += ":link_local"
+                return (iptype, {})
             except Exception:
                 pass
-        return ""
+        return ("",{})
 
     @staticmethod
     def testIP():
@@ -226,29 +227,29 @@ class MIsType:
             yield test
 
     @classmethod
-    def isTimestamp(cls, label: str, json_type: type, value: str) -> str:
+    def isTimestamp(cls, label: str, json_type: type, value: str) -> (str, dict):
         if "time" in label:
             if json_type == str:
                 try:
                     float(value)
                     try:
                         int(value)
-                        return "timestamp:epoch(int)"
+                        return ("timestamp:epoch(int)",{})
                     except Exception:
-                        return "timestamp:epoch(float)"
+                        return ("timestamp:epoch(float)",{})
                 except Exception:
                     return ""
             if json_type == float:
-                return "timestamp:epoch(float)"
+                return ("timestamp:epoch(float)",{})
             if json_type == int:
-                return "timestamp:epoch(int)"
+                return ("timestamp:epoch(int)",{})
         if json_type != str:
-            return ""
+            return ("",{})
         try:
             MZdatetime.strptime(value)
-            return "timestamp"
+            return ("timestamp",{})
         except Exception:
-            return ""
+            return ("",{})
 
     @staticmethod
     def testTimestamp():
@@ -260,6 +261,54 @@ class MIsType:
         ]:
             yield test
 
+    # URI: <schema>:<userinfo>[:<password>]@<host>[:<port>][;<uri-parameters>][?<headers>]
+    URIPat = re.compile(
+        # Notes on the regex syntax:
+        # (?:...) non-capture group.
+        # ()? optional group.
+        # Protocol.
+        "^([a-z]{3,}):"
+        # userinfo
+        "([^@^:]+)"
+        # password
+        "(?::([^@]+))?@"
+        # Domain or ip
+        "([^:^;]{4,})"
+        # port
+        "(?::([0-9]+))?"
+        # params and headers
+        "(?:[;?](.*))?$",
+        re.IGNORECASE)
+
+    @classmethod
+    def isURI(cls, label: str, json_type: type, value: str) -> (str, dict):
+        if json_type != str:
+            return ("",{})
+        m = cls.URIPat.match(value)
+        if not m:
+            return ("",{})
+        ret = {}
+        (ret["protocol"], ret["userinfo"], ret["password"],
+         ret["domain"], ret["port"],
+         ret["params"]) = m.groups()
+        if not cls.isDomain("host", str, ret["domain"]):
+            if not cls.isIP("", str, ret["domain"]):
+                return ("",{})
+            ret["ip"] = ret["domain"]
+            del ret["domain"]
+        return ("uri",ret)
+
+    @staticmethod
+    def testURI():
+        for test in [
+            (MIsType.isURI, "", str, "sip:1-999-123-4567@voip-provider.example.net", "uri"),
+            (MIsType.isURI, "", str, "1-999-123-4567@voip-provider.example.net", ""),
+            (MIsType.isURI, "", str, "sips:1-999-123-4567@voip-provider.example.net", "uri"),
+            (MIsType.isURI, "", str, "sip:1-999-123-4567:password@voip-provider.example.net;params", "uri"),
+            (MIsType.isURI, "", str, "1-999-123-4567:password192.168.0.1", "")
+        ]:
+            yield test
+
     # URL: protocol://(domain|IPAddress):port/path(#anchor|?param)
     # param: (key=value)key2=value2
     URLPat = re.compile(
@@ -267,7 +316,7 @@ class MIsType:
         # (?:...) non-capture group.
         # ()? optional group.
         # Protocol.
-        "^(?:(.{3,})://)?"
+        "^(?:([a-z]{3,}):)?//"
         # Domain or ip
         "([^/]{4,})"
         # port
@@ -284,26 +333,28 @@ class MIsType:
         re.IGNORECASE)
 
     @classmethod
-    def isURL(cls, label: str, json_type: type, value: str) -> str:
+    def isURL(cls, label: str, json_type: type, value: str) -> (str,dict):
         if json_type != str:
-            return ""
+            return ("",{})
         m = cls.URLPat.match(value)
         if not m:
-            return ""
-        (protocol, domain, port, path, params, anchor, other) = m.groups()
-        if protocol not in [
-            None, "ftp", "ftps", "file", "https", "http", "mailto",
-            "sip", "sips"
-        ]:
-            return ""
-        if cls.isDomain("host", str, domain):
-            if port is None and path is None and params is None:
-                if "." not in domain:
-                    return ""
+            return ("",{})
+        ret = {}
+        (ret["protocol"], ret["domain"], ret["port"],
+         ret["path"], ret["params"], ret["anchor"],
+         ret["other"]) = m.groups()
+        if cls.isDomain("host", str, ret["domain"]):
+            if (ret["port"] is None and ret["path"] is None and
+                ret["params"] is None):
+                if "." not in ret["domain"]:
+                    return ("",{})
         else:
-            if not cls.isIP("", str, domain):
-                return ""
-        return "url"
+            if cls.isIP("", str, ret["domain"]):
+                ret["ip"] = ret["domain"]
+                del ret["domain"]
+            else:
+                return ("",{})
+        return ("url",ret)
 
     @staticmethod
     def testURL():
@@ -316,14 +367,14 @@ class MIsType:
             yield test
 
     @classmethod
-    def isBool(cls, label: str, json_type: type, value: str) -> str:
+    def isBool(cls, label: str, json_type: type, value: str) -> (str,dict):
         if json_type == "bool":
-            return "bool"
+            return ("bool",{})
         if json_type != str:
-            return ""
+            return ("",{})
         if value in ["True", "true", "False", "false"]:
-            return "bool"
-        return ""
+            return ("bool",{})
+        return ("",{})
 
     @staticmethod
     def testBool():
@@ -349,12 +400,12 @@ class MIsType:
         re.IGNORECASE)
 
     @classmethod
-    def isMAC(cls, label: str, json_type: type, value: str) -> str:
+    def isMAC(cls, label: str, json_type: type, value: str) -> (str,dict):
         if json_type != str:
-            return ""
+            return ("",{})
         if cls.MACPat.match(value) or cls.MACPat2.match(value):
-            return "mac"
-        return ""
+            return ("mac",{})
+        return ("",{})
 
     @staticmethod
     def testMAC():
@@ -390,9 +441,9 @@ class MIsType:
         re.IGNORECASE)
 
     @classmethod
-    def isUUID(cls, label: str, json_type: type, value: str) -> str:
+    def isUUID(cls, label: str, json_type: type, value: str) -> (str,dict):
         if json_type != str:
-            return ""
+            return ("",{})
         m = cls.UUIDPat.match(value)
         variant = "?"
         if m:
@@ -407,8 +458,8 @@ class MIsType:
                     variant = "6"
                 elif n == cls.UUIDvariant7:
                     variant = "7"
-            return "uuid:v" + str(variant)
-        return ""
+            return ("uuid:v" + str(variant), {})
+        return ("",{})
 
     @staticmethod
     def testUUID():
@@ -426,9 +477,10 @@ class MIsType:
             yield test
 
     @classmethod
-    def isASN(cls, label: str, json_type: type, value: str) -> str:
+    def isASN(cls, label: str, json_type: type, value: str) -> (str, dict):
         if value.isdigit() and label in ["asn", "autonomous system number"]:
-            return "asn"
+            return ("asn",{})
+        return ("",{})
 
     @staticmethod
     def testASN():
@@ -438,7 +490,7 @@ class MIsType:
             yield test
 
     @classmethod
-    def isType(cls, label: str, json_type: type, value: str) -> str:
+    def isType(cls, label: str, json_type: type, value: str) -> (str,dict):
         for i in [
             MIsType.isIP, MIsType.isTimestamp, MIsType.isUUID, MIsType.isMAC, MIsType.isEmail, MIsType.isBool,
             MIsType.isDomain, MIsType.isURL, MIsType.isARN,
@@ -446,7 +498,8 @@ class MIsType:
         ]:
             t = i(label, json_type, value)
             if t:
-                return t
+                return (t,{})
+        return ("",{})
 
     @staticmethod
     def getTestCases():
@@ -461,6 +514,7 @@ class MIsType:
         yield from MIsType.testDomain()
         yield from MIsType.testASN()
         yield from MIsType.testMAC()
+        yield from MIsType.testURI()
 
     @classmethod
     def getMainType(cls, t: str) -> str:
@@ -483,15 +537,16 @@ class MIsType:
                     of, ol, ot, os, o_r = test
                     if of == f:
                         continue
-                    g = f(ol, ot, os)
-                    g2 = of(ol, ot, os)
+                    g,d = f(ol, ot, os)
+                    g2,d2 = of(ol, ot, os)
                     if g and o_r and not MIsType.isSame(g, g2):
-                        print("Conflict " + f.__name__ + " returned " + g +
-                              " which comflicts with " + o_r + "/" +
-                              of.__name__ + " returned " + g2 +
-                              " from value, \"" + os + "\"")
+                        print("Conflict " + f.__name__ + " returned " + str(g) +
+                              " " + str(d) +
+                              " which comflicts with " + str(o_r) + "/" +
+                              of.__name__ + " returned " + str(g2) + " " + str(d2) +
+                              " from value, \"" + str(os) + "\"")
             pf = f
-            g = f(l, t, s)
+            g,d = f(l, t, s)
             if g != r:
                 print("Failed " + str(s) + " got " + str(g) + " exp " + str(r) + " l=" + l + " t=" + str(t))
 
