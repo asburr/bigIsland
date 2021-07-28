@@ -11,11 +11,16 @@
 # 
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
 
-import json
+# The standard JSON parser reads the whole file into memeory. There is not
+# enough memory for huge files or, streams of json which never end. The
+# iterative JSON library is used instead, it parses chunks.
+
+# import json
+import ijson
+import json  # Iterative JSON.
 import argparse
 from discovery.src.parser import Parser
 from magpie.src.mistype import MIsType
-import re
 
 
 class JSONStats:
@@ -62,7 +67,7 @@ class JSONStats:
                 }
             d = self.stats[label]
             d["c"] += 1
-            t = MIsType.isType(label, type(obj), str(obj))
+            t, subfields = MIsType.isType(label, type(obj), str(obj))
             if t is not None:
                 dt = d["dt"]
                 if t not in dt:
@@ -107,7 +112,7 @@ class JSONStats:
 class JSONParser(Parser):
     def __init__(self):
         self.stats = JSONStats()
-        self.j = {}
+        self.j = None
         self.valueLabels = {}
         self.truncs = {}
         self.parent = None
@@ -119,34 +124,112 @@ class JSONParser(Parser):
         self.valueLabelNodes = []
         self.ignores = set()
         self.nests = set()
+        self.eventHandlers={
+            "start_map": self.__start_map,
+            "end_map": self.__end_map,
+            "map_key": self.__map_key,
+            "start_array": self.__start_array,
+            "end_array": self.__end_array,
+            "string": self.__value,
+            "number": self.__value
+        }
+        self.stack = []
+        self.c = None
+        self.key = None
+        self.r = None
+        self.debug = False
+
+    def __start_map(self, value: str):
+        c = {}
+        if self.c is not None:
+            self.__value(c)
+            self.r = None
+            self.stack.append(self.c)
+        self.c = c
+
+    def __end_map(self, value: str):
+        if len(self.stack) > 1:
+            self.c = self.stack.pop()
+        else:
+            self.r = self.c
+            self.c = None
+
+    def __map_key(self, value: str):
+        self.key = value
+
+    def __start_array(self, value: str):
+        c = []
+        if self.c is not None:
+            self.__value(c)
+            self.r = None
+            self.stack.append(self.c)
+        self.c = c
+
+    def __end_array(self, value: str):
+        if len(self.stack) == 1:
+            self.r = self.c
+            self.c = None
+        else:
+            self.c = self.stack.pop()
+
+    def __value(self, value: any):
+        if type(self.c) == dict:
+            if self.key in self.c:
+                if type(self.c[self.key]) != list:
+                    self.c[self.key] = [self.c[self.key]]
+                self.c[self.key].append(value)
+            else:
+                self.c[self.key] = value
+            self.key = None
+        elif type(self.c) == list:
+            if len(self.stack) == 1:
+                self.r = value
+            else:
+                self.c.append(value)
+        else:
+            self.r = value
 
     def parse(self, file: str) -> list:
-        self.j = self.toJSON(file)
-        print(self.j)
-        self.stats.gatherStats("", self.j)
-        print(self.stats.stats)
-        
-    # A JSON dict with duplicate keys is loaded into a list of values.
-    @staticmethod
-    def dict_duplicate_keys_to_list(ordered_pairs):
-        d = {}
-        for k, v in ordered_pairs:
-            if k in d:
-                if type(d[k]) is list:
-                    d[k].append(v)
-                else:
-                    d[k] = [d[k],v]
-            else:
-               d[k] = v
-        return d
+        r = []
+        for j in self.toJSON({"filename": file}):
+            self.stats.gatherStats("", j)
+            r.append(j)
+        return r
 
-    def toJSON(self, file: str) -> any:
-        with open(file, "r") as f:
-            self.j = json.load(f,
-                               object_pairs_hook=self.dict_duplicate_keys_to_list)
-            self.renameLabels = []
-            self.j = self._walk(self.j)
-            return self.j
+    def toJSON(self, param: dict) -> any:
+        self.c = self.j = None
+        self.key = None
+        self.r = None
+        with open(param["filename"], "r") as f:
+            param["file"] = f
+            for j in self.toJSON_FD(param):
+                yield j
+            
+    def toJSON_FD(self, param: dict) -> any:
+        p = ijson.basic_parse(param["file"])
+        offset = param["offset"]
+        for i, (event, value) in enumerate(p):
+            if i < offset:
+                continue
+            if self.debug:
+                print(">" + str(event) + " " + str(value) + " " + str(self.c))
+            self.eventHandlers[event](value)
+            if self.debug:
+                print("<" + str(event) + " " + str(value) + " " + str(self.c))
+                if len(self.stack) > 0:
+                    print(" STACK " + str(len(self.stack)) + " " +
+                          str(self.stack[-1]))
+            if self.r:
+                if self.debug:
+                    print("YIELD "+ str(self.r))
+                self.renameLabels = []
+                self.r = self._walk(self.r)
+                self.stats.gatherStats("", self.r)
+                yield self.r
+                self.r = None
+        if self.c:
+            yield self.c
+            self.c = None
 
     def getStats(self) -> JSONStats:
         self.stats.gatherStats("", self.j)
@@ -325,6 +408,38 @@ class JSONParser(Parser):
                     raise Exception("http param " + field + " is " +
                                     str(type(v)))
 
+    def diff(self, label: str, obj: any, obj2: any) -> None:
+        if type(obj) != type(obj2):
+            print("*** Different types " + label + " " + type(obj) + " " + type(obj2))
+            return False
+        if isinstance(obj, dict):
+            fields =  list(obj.keys())
+            fields2 = list(obj2.keys())
+            if fields != fields2:
+                print("*** Different keys in dictionary " + label)
+                print(fields)
+                print(fields2)
+                return False
+            for field in fields:
+                if not self.diff(label + "." + field, obj[field], obj2[field]):
+                    return False
+        elif isinstance(obj, list):
+            l = len(obj)
+            l2 = len(obj2)
+            if l != l2:
+                print(label)
+                print("Lists are different sizes " + str(l) + " " + str(l2))
+                return False
+            for i, v in enumerate(obj):
+                if not self.diff(label + ".lst." + str(i), v, obj2[i]):
+                    return False
+        else:
+            if obj != obj2:
+                print(label)
+                print("Objs are different " + str(obj) + " " + str(obj2))
+                return False
+        return True
+
     def _walk(self, obj: any) -> any:
         if isinstance(obj, dict):
             obj = self._wiresharkDict(obj)
@@ -454,6 +569,7 @@ class JSONParser(Parser):
         parser.add_argument('-i', '--ignore', help="name of file with a list of fields to ignore")
         parser.add_argument('-n', '--nest', help="name of file with list of fields to nest")
         parser.add_argument('-t', '--trunc', help="name of file with list of fields, value to be truncated beyond value")
+        parser.add_argument('-d', '--debug', help="activate debugging", action="store_true")
         args = parser.parse_args()
         p = JSONParser()
         p2 = JSONParser()
@@ -472,14 +588,16 @@ class JSONParser(Parser):
         if args.trunc:
             with open(args.trunc, "r") as f:
                 p.addTrunc(json.load(f))
-        j = p.toJSON(file=args.input)
+        j = []
+        p.debug = args.debug
+        for d in p.toJSON(param={"filename": args.input, "offset": 0}):
+            j.append(d)
         if args.output:
             with open(args.output, "r") as f:
                 oj = json.load(f)
                 if oj != j:
                     print("ERROR : mismatch output")
-                    print(j)
-                    print(oj)
+                    p.diff("",j,oj)
                 else:
                     print("PASS")
         else:
