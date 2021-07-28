@@ -2,5 +2,6 @@
   "data-text-lines",
   "tcp.segments",
   "_ws.expert",
-  "_ws.malformed"
+  "_ws.malformed",
+  "Capture-DEBUG"
 ]

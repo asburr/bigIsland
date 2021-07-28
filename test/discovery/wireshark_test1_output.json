@@ -58,12 +58,34 @@
             "layers": {
                 "frame": {
                     "frame.interface_id": "0",
+                    "frame.protocols": "eth:ethertype:ip:tcp:ssl:",
                     "eth": {
                         "eth.dst": "3c:77:e6:18:f7:6d",
                         "ip": {
                             "ip.version": "4"
                         }
                     }
+                }
+            }
+        }
+    }, {
+        "http": {
+            "Usage-agent ": {
+                "value": "Realtime IRR Rerouting"
+            },
+            "Cookie": {
+                "value": "MUID=12345"
+            },
+            "Content-Type": {
+                "value": "text/xml",
+                "charset": "utf-8"
+            }
+        }
+    }, {
+        "_source": {
+            "layers": {
+                "frame": {
+                    "frame.protocols": "eth:ethertype:ip:tcp:ssl:"
                 }
             }
         }

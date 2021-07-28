@@ -18,8 +18,7 @@
             "dns.qry.type": "3"
         }
     }
-},
-{
+}, {
     "json": {
         "json.object": {
             "json.member": {
@@ -43,8 +42,7 @@
             }
         }
     }
-},
-{
+}, {
     "protocol": {
         "length": 123,
         "protocol.msg.code": "ping",
@@ -53,18 +51,32 @@
             "protocol.param.flags": "0x12"
         }
     }
-},
-{
+}, {
     "_source": {
         "layers": {
             "frame": {
-                "frame.interface_id": "0"
+                "frame.interface_id": "0",
+                "frame.protocols": "eth:ethertype:ip:tcp:ssl:ssl:x509"
             },
             "eth": {
                 "eth.dst": "3c:77:e6:18:f7:6d"
             },
             "ip": {
                 "ip.version": "4"
+            }
+        }
+    }
+}, {
+    "http": {
+        "http.request.line": "Usage-agent : Realtime IRR Rerouting\r\n",
+        "http.request.line": "Cookie: MUID=12345;\r\n",
+        "http.request.line": "Content-Type: text\/xml; charset=utf-8\r\n"
+    }
+}, {
+    "_source": {
+        "layers": {
+            "frame": {
+                "frame.protocols": "eth:ethertype:ip:tcp:ssl:x509sat:x509sat"
             }
         }
     }
