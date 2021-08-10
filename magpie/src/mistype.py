@@ -46,7 +46,7 @@ class MIsType:
         if json_type != str:
             return ("",{})
         label_good = False
-        for lbl in ["dom", "host", "source"]:
+        for lbl in ["dom", "host", "source", "dns", "name"]:
             label_good |= (lbl in label)
         if not label_good:
             return ("",{})
@@ -496,9 +496,9 @@ class MIsType:
             MIsType.isDomain, MIsType.isURL, MIsType.isARN,
             MIsType.isUA, MIsType.isASN
         ]:
-            t = i(label, json_type, value)
+            t, subfield = i(label, json_type, value)
             if t:
-                return (t,{})
+                return (t, subfield)
         return ("",{})
 
     @staticmethod

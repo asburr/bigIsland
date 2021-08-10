@@ -11,6 +11,62 @@
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
 import xml.etree.ElementTree as ET
 from discovery.src.parser import Parser
+import xml.sax
+
+
+class XMLHandler(xml.sax.handler.ContentHandler):
+    def __init__(self):
+        self.attrs = None
+        self.chars = ""
+        self.start = None
+        self.stack = []
+        self.record = {}
+        self.records = []
+        self.endRecord = None
+
+    def parse(self, f):
+        xml.sax.parse(f, self)
+        return self._result
+
+    def characters(self, data):
+        self.chars += data
+
+    def startElement(self, name, attrs):
+        if self.start is not None:
+            # Nested element.
+            parent = self.record
+            parent[self.start] = self.record = {}
+            self.stack.append(parent)
+        self.start = name
+        if attrs.getLength():
+            self.attrs = {}
+            for attname in attrs.getNames():
+                self.attrs[attname] = attrs.getValue(attname)
+
+    def endElement(self, name):
+        if self.start != name:
+            # end of nested element
+            self.record = self.stack.pop()
+        if len(self.chars.strip()) == 0:
+            self.chars = None
+        if self.attrs:
+            value = {"attrs": self.attrs}
+            if self.chars:
+                value["value"] = self.chars
+            self.attrs = None
+        else:
+            value = self.chars
+        self.chars = ""
+        if name not in self.record:
+            self.record[name] = value
+        else:
+            if not isinstance(self.record[name],list):
+                self.record[name] = [self.record[name]]
+            self.record[name].append(value)
+        if name == self.endRecord:
+            self.records.append(self.record)
+        elif len(self.stack):
+            self.records.append(self.record)
 
 
 class XMLParser(Parser):
@@ -33,14 +89,33 @@ example, field(test) is seen three times, and the second time is a list.
                'test2': [{'_val_': '456'}, {'_val_': '789'}]}}
     """
     def parse(self, file: str) -> list:
-        j = self.toJSON(file)
+        j = self.toJSON({"filename": file})
         print(j)
 
-    def toJSON(self, file: str) -> any:
+    def toJSON(self, param: dict) -> any:
+        with open(param["filename"], newline='') as file:
+            param["file"] = file
+            yield self.toJSON_FD(param)
+        
+    def toJSON_FD(self, param: dict) -> any:
+        offset = param["offset"]
+        self.parser = xml.sax.make_parser()
+        self.parser.setFeature(xml.sax.handler.feature_namespaces, 0)
+        handler = XMLHandler()
+        recordCount = 0
+        for line in param["file"].readline():
+            self.parser.feed(line, handler)
+        for record in handler.records:
+            recordCount += 1
+            if recordCount >= offset:
+                yield record
+        handler.records = []
+
+    def toJSON_old(self, file: str) -> any:
         root = ET.parse(file).getroot()
-        return {root.tag: self._toJSON(root)}
+        return {root.tag: self._toJSON_old(root)}
     
-    def _toJSON(self, root: ET.Element) -> any:
+    def _toJSON_old(self, root: ET.Element) -> any:
         tagcnt = {}
         j = {}
         if len(root.attrib):

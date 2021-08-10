@@ -93,11 +93,11 @@ import json
 import traceback
 from magpie.src.mistype import MIsType
 from magpie.src.mzdatetime import MZdatetime
-import sys
-from parser import Parser
-from JSONParser import JSONParser
-from XMLParser import XMLParser
-from CSVParser import CSVParser
+# import sys
+from discovery.src.parser import Parser
+from discovery.src.JSONParser import JSONParser
+from discovery.src.XMLParser import XMLParser
+from discovery.src.CSVParser import CSVParser
 import os
 
 
@@ -195,9 +195,12 @@ class SchemaDiscovery:
             s = str(j)
             if self.selecting:
                 self.selecting &= (s == v)
-            jt = MIsType.isType(l, type(j), s)
+            jt, jd = MIsType.isType(l, type(j), s)
             if jt != t:
                 raise IncompatibleException("Expect type " + t + " got " + jt)
+            # TODO; 
+            # if len(jd) > 0:
+            #    for newfield in jd.keys():
             self.raw_row[r["ri"]] = s
             if "mi" in r:
                 self.mapped_row[r["mi"]] = s
@@ -268,7 +271,6 @@ class SchemaDiscovery:
             self.r_changed = True  # Potential change.
         else:
             self.r = r
-
     def _load(self, label: str, obj: any) -> dict:
         if isinstance(obj, dict):
             lst = list(obj.keys())
@@ -304,7 +306,7 @@ class SchemaDiscovery:
                 print("load value: " + str(obj))
             jtype = type(obj).__name__
             sobj = str(obj)
-            t = MIsType.isType(label.lower(), jtype, sobj)
+            t, td = MIsType.isType(label.lower(), jtype, sobj)
             if not t:
                 t = jtype
             d = {"t": t, "ts": self.ts, "c": 1, "v": sobj}

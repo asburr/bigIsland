@@ -9,7 +9,7 @@
 # GNU General Public License for more details.
 # 
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
-import xml.etree.ElementTree as ET
+# import xml.etree.ElementTree as ET
 from discovery.src.parser import Parser
 import csv
 
@@ -20,6 +20,18 @@ csv.register_dialect(
         quoting=csv.QUOTE_MINIMAL,
         doublequote=True
 )
+csv.register_dialect(
+        'csv',
+        delimiter=',',
+        quoting=csv.QUOTE_MINIMAL,
+        doublequote=True
+)
+csv.register_dialect(
+        'tsv',
+        delimiter='\t',
+        quoting=csv.QUOTE_MINIMAL,
+        doublequote=True
+)
 
 
 class CSVParser(Parser):
@@ -27,27 +39,30 @@ class CSVParser(Parser):
         self.dialect = dialect
 
     def parse(self, file: str) -> list:
-        j = self.toJSON(file)
+        j = self.toJSON({"filename": file})
         print(j)
 
-    def toJSON(self, file: str) -> any:
-        import csv
+    def toJSON(self, param: dict) -> any:
         # newline='' means blank lines are empty lines.
-        with open(file, newline='') as csvfile:
-            r = csv.reader(csvfile, dialect=self.dialect)
+        with open(param["filename"], newline='') as csvfile:
+            param["file"] = csvfile
+            yield self.toJSON_FD(param)
+
+    def toJSON_FD(self, param: dict) -> any:
+        offset = param["offset"]
+        with csv.reader(param["file"], dialect=self.dialect) as r:
             hdrs = next(r, None)
-            sheet = []
-            for row in r:
-                drow = {}
-                for i, col in enumerate(row):
-                    if col:
-                        drow[hdrs[i]] = col
-                sheet.append(drow)
-        return sheet
+            for i, row in enumerate(r):
+                if i >= offset:
+                    drow = {}
+                    for i, col in enumerate(row):
+                        if col:
+                            drow[hdrs[i]] = col
+                    yield drow
 
     @staticmethod
     def main():
-        p = CSVParser('excel')
+        p = CSVParser('csv')
         p.parse(file="test.csv")
 
 

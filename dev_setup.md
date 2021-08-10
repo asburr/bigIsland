@@ -79,4 +79,13 @@ Add it.
   I.e. from package.module import function
 * Ensure the shell variable $PYTHONPATH, or the spyder Run config per
   file called "working directory setting", is set to the root directory where
-  the package is installed. I.e. export PYTHONPATH=$PWD:$PYHTONPATH
+  the package is installed. I.e. export PYTHONPATH=$PWD:$PYTHONPATH
+  
+# GIT
+
+## See what is about to be pushed.
+
+# Diff
+git diff --cached origin/master
+# List files
+git diff --stat --cached origin/master

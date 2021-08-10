@@ -17,42 +17,42 @@
     {"loadf": {
         "files": "directory.attributes.files",
         "f": "directory.attributes",
-        "s": {"files": "file.schema", "oracleTable": "ATTRIBUTES"},
+        "s": {"file": {"f": "file.schema", "oracleTable": "ATTRIBUTES"} },
         "fstats": "directory.attributes.stats"
     }},
     {"loadf": {
         "files": "directory.company.files",
         "f": "directory.company",
-        "s": {"files": "directory.schema.files", "oracleTable": "COMPANY"},
+        "s": {"file": {"f": "directory.schema.files", "oracleTable": "COMPANY"} },
         "fstats": "directory.company.stats"
     }},
     {"loadf": {
         "files": "directory.country.files",
         "f": "directory.country",
-        "s": {"files": "directory.schema.files", "oracleTable": "COUNTRY"},
+        "s": {"file": {"f": "directory.schema.files", "oracleTable": "COUNTRY"} },
         "fstats": "directory.company.stats"
     }},
     {"loadf": {
         "files": "directory.pbx.files",
         "f": "directory.pbx",
-        "fStats": "stats.pbx",
-        "s": {"files": "directory.schema.files", "oracleTable": "PBX"}
+        "fstats": "stats.pbx",
+        "s": {"file": { "f": "directory.schema.files", "oracleTable": "PBX"} }
     }},
     {"expand": {
-        "feed": "directory.pbx",
+        "f": "directory.pbx",
         "j": {
-            "fs": ["directory.pbx.COUNTRY_ID"],
+            "fs": [{"f": "directory.pbx.COUNTRY_ID"}],
             "w": "directory.country",
-            "o": ["directory.country.COUNTRY_ID"]
+            "o": [{"f": "directory.country.COUNTRY_ID"}]
         },
         "a": {
             "a": "directory.pbx.TELEPHONE",
             "fmt": "{}{}{}{}",
             "fs": [
-                "directory.country.CC",
-                "directory.pbx.AREACODE",
-                "directory.pbx.LOCALCODE",
-                "directory.pbx.SUBSCRIBER"
+                {"f": "directory.country.CC"},
+                {"f": "directory.pbx.AREACODE"},
+                {"f": "directory.pbx.LOCALCODE"},
+                {"f": "directory.pbx.SUBSCRIBER"}
             ]
         }
     }},
@@ -60,11 +60,11 @@
         "f": "directory.new.files",
         "t": "SUM",
         "e": "${EMAIL}",
-        "p": "60"
+        "p": 60
     }},
     {"alert": {
         "t": "SUM",
         "e": "${EMAIL}",
-        "p": "60"
+        "p": 60
     }}
 ]

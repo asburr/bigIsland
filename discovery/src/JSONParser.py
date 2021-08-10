@@ -15,13 +15,19 @@
 # enough memory for huge files or, streams of json which never end. The
 # iterative JSON library is used instead, it parses chunks.
 
-# import json
-import ijson
-import json  # Iterative JSON.
+import ijson  # Iterative json.
+import json
 import argparse
 from discovery.src.parser import Parser
 from magpie.src.mistype import MIsType
 
+
+# Gather stats for a python data structure of list, dict.
+# While gathering stats, the type of leaf values is determined and
+# inserted into the structure.
+# {"host": "www.hello.world.com"}
+# Becomes:
+# {"host": {"v": "www.hello.world.com", "t": "domain"}
 
 class JSONStats:
     """

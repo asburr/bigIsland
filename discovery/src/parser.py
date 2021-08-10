@@ -21,3 +21,7 @@ class Parser(ABC):
     def parse(self, file: str) -> list:
         raise Exception("Abstract")
     
+    @abstractmethod
+    def toJSON_FD(self, file: any) -> any:
+        raise Exception("Abstract")
+
