@@ -1,0 +1,49 @@
+[
+    {"files": {
+        "p": {
+            "p": "test/Hallelulajah/pcap",
+            "d": 1,
+            "ro": "test/Hallelulajah/pcap_processed",
+            "fs": [
+                {"f": "samples.files", "re": ".*\\.pcap"},
+                {"f": "samples.new.files", "re": ".*"}
+            ]
+        }
+    }},
+    {"loadf": {
+        "f": "samples.data",
+        "fstats": "samples.stats",
+        "files": "samples.files"
+    }},
+    {"expand": {
+        "f": "samples.data",
+        "t": ["ituE.164"],
+        "j": {
+            "t": "ituE.164",
+            "w": "directory.pbx",
+            "o": ["directory.pbx.TELEPHONE"]
+        },
+        "a": {
+            "a": "${typefield}_COMPANY_ID",
+            "fs": ["data.pbx.COMPANY_ID"],
+            "fmt": "{}"
+        }
+    }},
+    {"loadsum": {
+        "f": "samples.daily_stats",
+        "i": "samples.stats",
+        "fs": [],
+        "p": [{"f": "samples.stats.timestamp", "t": "day"}]
+    }},
+    {"alert": {
+        "f": "samples.new.files",
+        "t": "SUM",
+        "e": "${EMAIL}",
+        "p": "60"
+    }},
+    {"alert": {
+        "e": "${EMAIL}",
+        "t": "SUM",
+        "p": "60"
+    }}
+]

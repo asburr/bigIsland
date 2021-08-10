@@ -1,0 +1,70 @@
+[
+    {"files": {
+        "p": {
+            "p": "test/Hallelulajah/data",
+            "d": 1,
+            "ro": "test/Hallelulajah/data_processed",
+            "fs": [
+                {"f": "directory.schema.files", "re": "title\\.txt"},
+                {"f": "directory.attributes.files", "re": "company_attributes\\.csv"},
+                {"f": "directory.company.files", "re": "company\\.csv"},
+                {"f": "directory.country.files", "re": "country\\.csv"},
+                {"f": "directory.pbx.files", "re": "pbx\\.csv"},
+                {"f": "directory.new.files", "re": ".*\\.csv"}
+            ]
+        }
+    }},
+    {"loadf": {
+        "files": "directory.attributes.files",
+        "f": "directory.attributes",
+        "s": {"files": "file.schema", "oracleTable": "ATTRIBUTES"},
+        "fstats": "directory.attributes.stats"
+    }},
+    {"loadf": {
+        "files": "directory.company.files",
+        "f": "directory.company",
+        "s": {"files": "directory.schema.files", "oracleTable": "COMPANY"},
+        "fstats": "directory.company.stats"
+    }},
+    {"loadf": {
+        "files": "directory.country.files",
+        "f": "directory.country",
+        "s": {"files": "directory.schema.files", "oracleTable": "COUNTRY"},
+        "fstats": "directory.company.stats"
+    }},
+    {"loadf": {
+        "files": "directory.pbx.files",
+        "f": "directory.pbx",
+        "fStats": "stats.pbx",
+        "s": {"files": "directory.schema.files", "oracleTable": "PBX"}
+    }},
+    {"expand": {
+        "feed": "directory.pbx",
+        "j": {
+            "fs": ["directory.pbx.COUNTRY_ID"],
+            "w": "directory.country",
+            "o": ["directory.country.COUNTRY_ID"]
+        },
+        "a": {
+            "a": "directory.pbx.TELEPHONE",
+            "fmt": "{}{}{}{}",
+            "fs": [
+                "directory.country.CC",
+                "directory.pbx.AREACODE",
+                "directory.pbx.LOCALCODE",
+                "directory.pbx.SUBSCRIBER"
+            ]
+        }
+    }},
+    {"alert": {
+        "f": "directory.new.files",
+        "t": "SUM",
+        "e": "${EMAIL}",
+        "p": "60"
+    }},
+    {"alert": {
+        "t": "SUM",
+        "e": "${EMAIL}",
+        "p": "60"
+    }}
+]
