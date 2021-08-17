@@ -39,7 +39,8 @@
         "s": {"file": { "f": "directory.schema.files", "oracleTable": "PBX"} }
     }},
     {"expand": {
-        "f": "directory.pbx",
+        "f": "directory.pbx.telephone",
+        "i": "directory.pbx",
         "j": {
             "fs": [{"f": "directory.pbx.COUNTRY_ID"}],
             "w": "directory.country",

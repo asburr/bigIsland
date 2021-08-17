@@ -17,7 +17,8 @@
         "s": {"tshark": true }
     }},
     {"expand": {
-        "f": "samples.data",
+        "f": "samples.data.company",
+        "i": "samples.data",
         "j": {
             "t": "ituE.164",
             "w": "directory.pbx",

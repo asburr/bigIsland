@@ -18,7 +18,7 @@
             }, "fs": {
                 "type": "listComposites",
                 "f": {
-                    "type": "feed", "default": null,
+                    "type": "feed", "default": null, "key": true,
                     "desc": "Outputted feed of file names."
                 },
                 "re": {
@@ -57,7 +57,7 @@
              "type": "feed",
              "desc": "Input feed containing the file-names that are loaded"
         }, "f": {
-             "type": "feed",
+             "type": "feed", "key": true,
              "desc": "Output feed containing the loaded data"
         }, "fstats": {
             "type": "feed",
@@ -86,7 +86,8 @@
                 }
             }
         }, "e": {
-            "type": "feed", "default": "${f}_errors",
+            "type": "feed", "key": true,
+            "default": "${f}_errors",
             "desc": "Output feed containing filename and error, for files that failed to load."
         }, "c": {
             "type": "composite", "default": null,
@@ -156,7 +157,7 @@
         "type": "composite",
         "desc": "Load a sum of field(s) identified explicitly by name or, the default is sum all number fields. Sum can be partitioned by field(s) from the same feed. { f:data i:datai fs:[ { f:<fieldwhere> } ] p:[ { f:<fieldPartition> w:<logicalExpression> } ] }",
         "f": {
-            "type": "feed"
+            "type": "feed", "key": true
         }, "i": {
             "type": "feed", "desc": "The other feed"
         }, "fs": {
@@ -177,7 +178,7 @@
         "type": "composite",
         "desc": "Load a count of the occurence of field(s) identified explicitly by name or, the default is count all fields. Count can be partitioned by field(s) from the same feed. { f:data i:datai fs:[ { f:<fieldwhere> } ] p:[ { f:<fieldPartition> w:<logicalExpression> } ] }",
         "f": {
-            "type": "feed"
+            "type": "feed", "key": true
         }, "i": {
             "type": "feed", "desc": "The other feed"
         }, "fs": {
@@ -199,13 +200,15 @@
         "type": "composite",
         "desc": "Add fields from values from within the same feed or from another feed. Two ways to join with the other feed. First is an explicit list of feed's fields. Second is by datatype, a list of datatypes identifies the feed's fields. { f:data j:{ fs:[ { f:<field> } ] } }",
         "f": {
-            "type": "feed"
+            "type": "feed", "key": true
+        }, "i": {
+            "type": "feed", "desc": "The feed to expand"
         }, "j": {
             "type": "composite", "default": null,
-            "desc": "Expand this feed with fields from another feed or, default is to join with itself",
+            "desc": "Join",
             "fs": {
                 "type": "listComposites", "default": null,
-                "desc": "List of feed's field to join on.",
+                "desc": "List of feeds to join on.",
                 "f": {
                     "type": "field"
                 }
@@ -214,10 +217,10 @@
                 "desc": "Datatype with which to identify the field to join on. Alert when datatype is first obsolete in the feed. All fields with the datatype are expanded."
             }, "w": {
                 "type": "feed", "default": null,
-                "desc": "Name of the other feed to join with"
+                "desc": "Name of the other feed to join with, default is to join with itself"
             }, "o": {
                 "type": "listComposites", "default": null,
-                "desc": "List of join's field to join on.",
+                "desc": "List of fields to join on. If datatype, then one field expected in o.f. Otherwise for named fields, then o.f must match the number of names in fs.f",
                 "f": {
                     "type": "field"
                 }
@@ -241,7 +244,10 @@
     }, "alert": {
         "type": "composite",
         "desc": "{t:SUM e:fred@gmail.com p:60}",
-        "f": {
+        "n": {
+            "type": "feed", "default": "${f}_alert", "key": true,
+            "desc": "Name for the feed of alerts"
+        }, "f": {
             "type": "feed", "default": null,
             "desc": "Flow of events that trigger the alert or, default is all errors"
         }, "t": {
