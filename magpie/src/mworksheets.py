@@ -20,7 +20,6 @@ import traceback
 
 class MWorksheets:
     def __init__(self, dir: str):
-        self.dir = dir
         self.verify_handlers = {
             "composite": self._verifyComposite,
             "listComposites": self._verifyListComposite,
@@ -35,6 +34,12 @@ class MWorksheets:
             "regex": self._verifyRegex,
             "bool": self._verifyBool
         }
+        self.title_handlers = {
+            "composite": self._titleComposite,
+            "listComposites": self._titleListComposite,
+            "feed": self._titleFeed
+        }
+        self.dir = dir
         if not os.path.isdir(self.dir):
             raise Exception("Failed to find worksheet dir " + self.dir)
         schema = os.path.join(self.dir, "worksheetHelp.json")
@@ -72,13 +77,46 @@ class MWorksheets:
     def titles(self) -> list:
         return list(self.ws.keys())
 
-    def _Error(stack: list, error:str) -> str:
+    def sheet(self, title: str) -> list:
+        return self.ws[title]
+
+    def _titleComposite(self, cmd: any, schema: any) -> str:
+        for k in cmd.keys():
+            title = self._titlecmd(cmd[k], schema[k])
+            if title:
+                return title
+
+    def _titleListComposite(self, cmd: any, schema: any) -> str:
+        for j in cmd:
+            title = self._titleComposite(j, schema)
+            if title:
+                return title
+
+    def _titleFeed(self, stack: list, cmd: any, schema: any) -> str:
+        if "key" in schema:
+            return cmd
+        return None
+
+    def _titlecmd(self, cmd: any, schema: any) -> str:
+        if "key" in schema:
+            return cmd
+        t = schema["type"]
+        if t in self.title_handlers:
+            return self.title_handlers[t](cmd, schema)
+        return None
+
+    def cmdTitle(self, cmd: dict) -> str:
+        return self._titlecmd(cmd, self.schema[list(cmd.keys())[0]])
+
+    def _Error(self, stack: list, error:str) -> str:
         cf = currentframe()
         return "Error"+str(cf.f_back.f_lineno)+" at "+".".join(stack)+" "+error
 
     def _verifyComposite(self, stack: list, cmd: any, schema: any) -> str:
         if not isinstance(cmd, dict):
             return self._Error(stack, "\nExpecting " + str(schema) + "\ngot: " + str(cmd))
+        if "key" in schema:
+            return self._Error(stack, "\nUnexpected key in " + str(schema))
         for k in cmd.keys():
             stack.append(k)
             if k not in schema:
@@ -105,6 +143,8 @@ class MWorksheets:
     def _verifyListComposite(self, stack: list, cmd: any, schema: any) -> str:
         if not isinstance(cmd, list):
             return self._Error(stack, "\nExpecting " + str(schema) + "\ngot: " + str(cmd))
+        if "key" in schema:
+            return self._Error(stack, "\nUnexpected key in " + str(schema))
         for i, j in enumerate(cmd):
             stack.append("e"+str(i))
             error = self._verifyComposite(stack, j, schema)
@@ -124,6 +164,8 @@ class MWorksheets:
         if not isinstance(cmd, str):
              return self._Error(stack, "\nExpecting " + str(schema) + "\ngot: " +
                           str(cmd) + " " + str(type(cmd)))
+        if "key" in schema:
+            return self._Error(stack, "\nUnexpected key in " + str(schema))
         if not cmd.isalnum() and not os.sep in cmd:
              return self._Error(stack, "\nExpecting path, alnum or " + os.sep
                           + "\ngot: " + str(cmd))
@@ -132,6 +174,8 @@ class MWorksheets:
         if not isinstance(cmd, str):
              return self._Error(stack, "\nExpecting " + str(schema) + "\ngot: " +
                           str(cmd) + " " + str(type(cmd)))
+        if "key" in schema:
+            return self._Error(stack, "\nUnexpected key in " + str(schema))
         if not cmd.isidentifier() and "." not in cmd:
              return self._Error(stack, "\nExpecting identifier " + str(schema)
                           + "\ngot: " + str(cmd))
@@ -140,11 +184,15 @@ class MWorksheets:
         if not isinstance(cmd, str):
              return self._Error(stack, "\nExpecting " + str(schema) + "\ngot: " +
                           str(cmd) + " " + str(type(cmd)))
+        if "key" in schema:
+            return self._Error(stack, "\nUnexpected key in " + str(schema))
 
     def _verifyInt(self, stack: list, cmd: any, schema: any) -> str:
         if not isinstance(cmd, int):
              return self._Error(stack, "\nExpecting " + str(schema) + "\ngot: " +
                           str(cmd) + " " + str(type(cmd)))
+        if "key" in schema:
+            return self._Error(stack, "\nUnexpected key in " + str(schema))
 
     def _verifyEmail(self, stack: list, cmd: any, schema: any) -> str:
         if not isinstance(cmd, str):
@@ -154,6 +202,8 @@ class MWorksheets:
             if label != "email":
                  return self._Error(stack, "\nExpecting " + str(schema) + "\ngot: "
                               + cmd + "\ntype:" + label)
+        if "key" in schema:
+            return self._Error(stack, "\nUnexpected key in " + str(schema))
 
     def _verifyFmt(self, stack: list, cmd: any, schema: any) -> str:
         if not isinstance(cmd, str):
@@ -165,13 +215,19 @@ class MWorksheets:
              cmd.format(*p)
         except Exception as e:
              return self._Error(stack, "\nError in format " + cmd + "\nerror: " + str(e))
+        if "key" in schema:
+            return self._Error(stack, "\nUnexpected key in " + str(schema))
 
     def _verifyBool(self, stack: list, cmd: any, schema: any) -> str:
         if not isinstance(cmd, bool):
              return self._Error(stack, "\nExpecting " + str(schema) + "\ngot: " +
                           str(cmd) + " " + str(type(cmd)))
+        if "key" in schema:
+            return self._Error(stack, "\nUnexpected key in " + str(schema))
 
     def _verifyAny(self, stack: list, cmd: any, schema: any) -> str:
+        if "key" in schema:
+            return self._Error(stack, "\nUnexpected key in " + str(schema))
         pass
 
     def _verifyRegex(self, stack: list, cmd: any, schema: any) -> str:
@@ -182,14 +238,16 @@ class MWorksheets:
             re.compile(cmd)
         except Exception as e:
             return self._Error(stack, "Error in regex " + cmd + " " + str(e))
+        if "key" in schema:
+            return self._Error(stack, "\nUnexpected key in " + str(schema))
 
     def _verifycmd(self, stack: list, cmd: any, schema: any) -> str:
         t = schema["type"]
         if t not in self.verify_handlers:
             if t.endswith(".macro"):
-                if t not in self.cmds_schema:
-                    return self._Error(stack, "Unknonw macro named " + t)
-                return self._verifycmd(stack, cmd, self.cmds_schema[t])
+                if t not in self.schema:
+                    return self._Error(stack, "Unknown macro named " + t)
+                return self._verifycmd(stack, cmd, self.schema[t])
             else:
                 return self._Error(stack, "Unknown type " + t)
         return self.verify_handlers[t](stack, cmd, schema)
@@ -197,16 +255,16 @@ class MWorksheets:
     def verifycmds(self, j: any) -> str:
         for cmd in j:
             name = list(cmd.keys())[0]
-            if name not in self.cmds_schema:
+            if name not in self.schema:
                 return self._Error([], "Unexpected cmd name " + name)
-            error = self._verifycmd([name], cmd[name], self.cmds_schema[name])
+            error = self._verifycmd([name], cmd[name], self.schema[name])
             if error:
                 return "Error in cmd " + name + " " + error
 
     @staticmethod
     def main():
         parser = argparse.ArgumentParser(description="Worksheet")
-        parser.add_argument('dir', help="worksheet dir")
+        parser.add_argument('dir', help="worksheet dir", nargs='?', const="worksheets", type=str)
         args = parser.parse_args()
         MWorksheets(args.dir)
 
