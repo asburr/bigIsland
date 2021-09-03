@@ -3,34 +3,37 @@
         "type": "composite",
         "desc": "outputs fully qualified file names of not (ever) previously processed files.",
         "eg": "{p: { p:<path> d:1 ro:<path> fs:[ { f:<fileo> re:*\\.csv } ] a:{ p:<path> dateSubDir:day purge:60 diskUsage:70 onError:<path> } } }",
-        "p": {
+        "root": {
+            "type": "str", "key": true,
+            "desc": "Root name for the feed of file names."
+        }, "path": {
             "type": "composite",
             "desc": "path to be processed",
-            "p": {
+            "path": {
                  "type": "path", "default": ".",
                  "desc": "Path to load files from. Default is current directory."
-            }, "d": {
+            }, "depth": {
                 "type": "int", "default": 0,
                 "desc": "Specifies the depth of subdir searching under input dir. Values are: no subdir(0); unlimited depth(-1); or, a depth(N)"
-            }, "ro": {
+            }, "readonly": {
                 "type": "path", "default": null,
                 "desc": "(ro) is used when path (p) is read only. Touch-files are created to track prior processed files. (ro) is a path on a writable file system where the touch-files can be created and deleted"
-            }, "fs": {
+            }, "fields": {
                 "type": "listComposites",
-                "f": {
-                    "type": "feed", "default": null, "key": true,
-                    "desc": "Outputted feed of file names."
+                "feed": {
+                    "type": "feed", "default": null,
+                    "desc": "Label the feed of file names. Use format to include root, {root}.name."
                 },
-                "re": {
+                "regex": {
                     "type": "regex", "default": null,
                     "desc": "Regex string. For a single feed use '*' to match all files"
                 }
             }
         },
-        "a": {
+        "archive": {
             "type": "composite", "default": null,
             "desc": "Archive processed files",
-            "p": {
+            "path": {
                 "type": "path",
                 "desc": "Successful loading of the file is moved to this location"
             }, "dateSubDir": {
@@ -54,42 +57,46 @@
         "desc": "Loads data from a file",
         "eg": "{files: <feed> f:<feed> fstats:<feed> s:{ tshark: false csv: 1 file:{ f: <feed> oracleTable: <table> csvRowCount: 1 } }",
         "files": {
-             "type": "feed",
+             "type": "feedRef",
              "desc": "Input feed containing the file-names that are loaded"
-        }, "f": {
+        }, "feed": {
              "type": "feed", "key": true,
              "desc": "Output feed containing the loaded data"
         }, "fstats": {
             "type": "feed",
             "desc": "Output Feed containing stats about the loaded data"
-        }, "s": {
-            "type": "composite",
+        }, "schema": {
+            "type": "choice",
             "desc": "Define how to get the schema",
             "tshark": {
-                "type": "bool", "default": false,
+                "type": "bool", "default": true,
                 "desc": "Process pcap files through tshark using -t json and use predefined procedures to clean up the tshark json."
-            }, "csv": {
+            }, "csvHeaderRow": {
                 "type": "int", "default": 0,
                 "desc": "CSV row count for files containing a CSV header row at the row count. Rows prior to the header row, are ignored and not processed as data nor headers."
             }, "file": {
                 "type": "composite", "default": null,
                 "desc": "Schema is found in a separate file",
-                "f": {
-                     "type": "feed",
+                "feed": {
+                     "type": "feedRef",
                      "desc": "Inputted file name(s) containing the schema"
-                }, "oracleTable": {
-                     "type": "str", "default": "",
-                     "desc": "When not default, schema is an Oracle formatted schema, and look for the schema labeled with the table-name"
-                }, "csvRowCount": {
-                     "type": "int", "default": 0,
-                     "desc": "When gt 0, schema is csv formatted headers. This is the row count to the header row for this schema. Count starts at 1."
+                }, "filetype": {
+                    "type": "choice",
+                    "desc": "Type of schema in the file",
+                    "oracleTable": {
+                         "type": "str", "default": "",
+                         "desc": "When not default, schema is an Oracle formatted schema, and look for the schema labeled with the table-name"
+                    }, "csvRowCount": {
+                         "type": "int", "default": 0,
+                         "desc": "When gt 0, schema is csv formatted headers. This is the row count to the header row for this schema. Count starts at 1."
+                    }
                 }
             }
-        }, "e": {
+        }, "errors": {
             "type": "feed", "key": true,
-            "default": "${f}_errors",
+            "default": "{feed}_errors",
             "desc": "Output feed containing filename and error, for files that failed to load."
-        }, "c": {
+        }, "cleanup": {
             "type": "composite", "default": null,
             "desc": "Instructions to cleanup the json that is outputted by parsing the data. These instructions are in addition to any automatic cleanup already performed by parsing",
             "valuelabels": {
@@ -156,42 +163,42 @@
     }, "loads": {
         "type": "composite",
         "desc": "Load a sum of field(s) identified explicitly by name or, the default is sum all number fields. Sum can be partitioned by field(s) from the same feed. { f:data i:datai fs:[ { f:<fieldwhere> } ] p:[ { f:<fieldPartition> w:<logicalExpression> } ] }",
-        "f": {
+        "feed": {
             "type": "feed", "key": true
-        }, "i": {
-            "type": "feed", "desc": "The other feed"
-        }, "fs": {
+        }, "input": {
+            "type": "feedRef", "desc": "The other feed"
+        }, "fields": {
             "type": "listComposites",
-            "f": {
+            "field": {
                 "type": "fieldwhere.macro"
             }
-        }, "p": {
+        }, "partition": {
             "type": "listComposites",
-            "f": {
+            "field": {
                 "type": "fieldpartition.macro"
             }
-        }, "w": {
+        }, "where": {
             "type": "logicalexpression.macro", "default": null,
             "desc": "restrict sum or, default is to sum all records"
         }
     }, "loadc": {
         "type": "composite",
         "desc": "Load a count of the occurence of field(s) identified explicitly by name or, the default is count all fields. Count can be partitioned by field(s) from the same feed. { f:data i:datai fs:[ { f:<fieldwhere> } ] p:[ { f:<fieldPartition> w:<logicalExpression> } ] }",
-        "f": {
+        "feed": {
             "type": "feed", "key": true
-        }, "i": {
-            "type": "feed", "desc": "The other feed"
-        }, "fs": {
+        }, "input": {
+            "type": "feedRef", "desc": "The other feed"
+        }, "fields": {
             "type": "listComposites",
-            "f": {
+            "field": {
                 "type": "fieldwhere.macro"
             }
         }, "partition": {
             "type": "listComposites",
-            "f": {
+            "field": {
                 "type": "fieldpartition.macro"
             },
-            "w": {
+            "where": {
                 "type": "logicalexpression.macro", "default": null,
                 "desc": "restrict count or, default is to count all records"
             }
@@ -199,41 +206,41 @@
     }, "expand": {
         "type": "composite",
         "desc": "Add fields from values from within the same feed or from another feed. Two ways to join with the other feed. First is an explicit list of feed's fields. Second is by datatype, a list of datatypes identifies the feed's fields. { f:data j:{ fs:[ { f:<field> } ] } }",
-        "f": {
+        "feed": {
             "type": "feed", "key": true
-        }, "i": {
-            "type": "feed", "desc": "The feed to expand"
-        }, "j": {
+        }, "input": {
+            "type": "feedRef", "desc": "The feed to expand"
+        }, "join": {
             "type": "composite", "default": null,
             "desc": "Join",
-            "fs": {
+            "fields": {
                 "type": "listComposites", "default": null,
                 "desc": "List of feeds to join on.",
-                "f": {
+                "field": {
                     "type": "field"
                 }
-            }, "t": {
+            }, "datatype": {
                 "type": "str", "default": null,
                 "desc": "Datatype with which to identify the field to join on. Alert when datatype is first obsolete in the feed. All fields with the datatype are expanded."
-            }, "w": {
-                "type": "feed", "default": null,
+            }, "with": {
+                "type": "feedRef", "default": null,
                 "desc": "Name of the other feed to join with, default is to join with itself"
-            }, "o": {
+            }, "on": {
                 "type": "listComposites", "default": null,
                 "desc": "List of fields to join on. If datatype, then one field expected in o.f. Otherwise for named fields, then o.f must match the number of names in fs.f",
-                "f": {
+                "field": {
                     "type": "field"
                 }
             }
-        }, "a": {
+        }, "add": {
             "type": "composite", "default": null,
-            "a": {
+            "add": {
                 "type": "str",
-                "desc": "${typefield}.name or fred.name. Where name is the new field"
-            }, "fs": {
+                "desc": "{typefield}.name or fred.name. Where name is the new field"
+            }, "fields": {
                 "type": "listComposites", "default": null,
                 "desc": "List of fields.",
-                "f": {
+                "field": {
                     "type": "field"
                 }
             }, "fmt": {
@@ -244,21 +251,28 @@
     }, "alert": {
         "type": "composite",
         "desc": "{t:SUM e:fred@gmail.com p:60}",
-        "n": {
-            "type": "feed", "default": "${f}_alert", "key": true,
+        "feed": {
+            "type": "feed", "default": "{input}_alert", "key": true,
             "desc": "Name for the feed of alerts"
-        }, "f": {
-            "type": "feed", "default": null,
+        }, "input": {
+            "type": "feedRef", "default": null,
             "desc": "Flow of events that trigger the alert or, default is all errors"
-        }, "t": {
+        }, "sumtype": {
             "type": "str", "default": "SUM", "choice": ["SUMPARTITIONED", "SUM"],
             "desc": "SUMPARTITIONED, one alert for each event; SUM, one alert for all events."
-        }, "e": {
+        }, "email": {
             "type": "email",
             "desc": "Email a breakdown of files failed to load"
-        }, "p": {
+        }, "period": {
             "type": "int", "default": 86400,
             "desc": "This is the period in second in between the email alerts."
+        }
+    }, "get": {
+        "type": "composite",
+        "desc": "Gets json objects from the dataset",
+        "limit": {
+            "type": "int", "default": 100,
+            "desc": "Limit the number of retrieved objects"
         }
     }
 }

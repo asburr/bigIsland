@@ -1,50 +1,52 @@
 [
     {"files": {
-        "p": {
-            "p": "test/Hallelulajah/pcap",
-            "d": 1,
-            "ro": "test/Hallelulajah/pcap_processed",
-            "fs": [
-                {"f": "samples.files", "re": ".*\\.pcap"},
-                {"f": "samples.new.files", "re": ".*"}
+        "root": "samples.files",
+        "path": {
+            "path": "test/Hallelulajah/pcap",
+            "depth": 1,
+            "readonly": "test/Hallelulajah/pcap_processed",
+            "fields": [
+                {"feed": "{root}.pcap", "regex": ".*\\.pcap"},
+                {"feed": "{root}.new", "regex": ".*"}
             ]
         }
     }},
     {"loadf": {
-        "f": "samples.data",
+        "feed": "samples.data",
         "fstats": "samples.stats",
-        "files": "samples.files",
-        "s": {"tshark": true }
+        "files": "samples.files.pcap",
+        "schema": {"tshark": true }
     }},
     {"expand": {
-        "f": "samples.data.company",
-        "i": "samples.data",
-        "j": {
-            "t": "ituE.164",
-            "w": "directory.pbx",
-            "o": [{"f": "directory.pbx.TELEPHONE"}]
+        "feed": "samples.data.company",
+        "input": "samples.data",
+        "join": {
+            "datatype": "ituE.164",
+            "with": "directory.pbx",
+            "on": [{"field": "directory.pbx.TELEPHONE"}]
         },
-        "a": {
-            "a": "${typefield}_COMPANY_ID",
-            "fs": [{"f": "data.pbx.COMPANY_ID"}],
+        "add": {
+            "add": "${typefield}_COMPANY_ID",
+            "fields": [{"field": "data.pbx.COMPANY_ID"}],
             "fmt": "{}"
         }
     }},
     {"loads": {
-        "f": "samples.daily_stats",
-        "i": "samples.stats",
-        "fs": [],
-        "p": [{"f": {"f": "samples.stats.timestamp", "t": "day"}}]
+        "feed": "samples.daily_stats",
+        "input": "samples.stats",
+        "fields": [],
+        "partition": [{"field": {"f": "samples.stats.timestamp", "f": "day"}}]
     }},
     {"alert": {
-        "f": "samples.new.files",
-        "t": "SUM",
-        "e": "${EMAIL}",
-        "p": 60
+        "input": "samples.files.new",
+        "sumtype": "SUM",
+        "email": "{EMAIL}",
+        "period": 60
     }},
     {"alert": {
-        "e": "${EMAIL}",
-        "t": "SUM",
-        "p": 60
+        "feed": "samples.alert",
+        "email": "{EMAIL}",
+        "sumtype": "SUM",
+        "period": 60
     }}
 ]

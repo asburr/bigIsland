@@ -10,11 +10,11 @@
 # 
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
 #
-# There is a heirarchy of Hallelu. The first database operation is sent to
-# the top Hallelu. The top Hallelu searches its children for a Hallelu that is
-# running the same database operation. In this case, the child Hallelu is
-# returned to the user. Otherwise, a new child Hallelu is created for the
-# database operation and this Hallelu is returned to the user.
+# There is a hierarchy of Hallelu. The first database operation is sent to
+# the summit. The summit searches for a Hallelu that is running the cmd,
+# in this case the child is returned to the user. Otherwise, when the cmd
+# is not already running, a new Hallelu is created and this Hallelu is
+# returned to the user.
 #
 # The user's next database operation is sent to the child Hallelu, not the
 # top Hallelu.
@@ -33,9 +33,11 @@ import socket
 import select
 import json
 import os
-import traceback
-import re
 from inspect import currentframe
+from magpie.src.mworksheets import MWorksheets
+from multiprocessing import Process
+import argparse
+from time import sleep
 
 
 def Error(stack: list, error:str) -> str:
@@ -44,6 +46,31 @@ def Error(stack: list, error:str) -> str:
 
 
 class Hallelu:
+    def __init__(self, port: int, ip: str, identification: str,
+                 worksheetdir: str, halleludir: str):
+        self.processes = []
+        self.ws = MWorksheets(worksheetdir)
+        self.halleludir = halleludir
+        self.stop = False
+        self.ip = ip
+        self.port = port
+        self.id = identification
+        self.init_socket(ip,port)
+        fn = "hall_" + self.id + ".json"
+        if self.id == "summit":
+            # Delete any past hallelu files.
+            self.removeHalleluFiles()
+            with open(os.path.join(self.halleludir,fn), "w") as f:
+                json.dump(f,{"port": self.port, "ip": self.ip, "cmd": None})
+        else:
+            # Add port number to the hallelu file.
+            with open(os.path.join(self.halleludir,fn), "r") as f:
+                j = json.load(f)
+            with open(os.path.join(self.halleludir,fn), "w") as f:
+                j["port"] = self.port
+                json.dump(f,j)
+            self.createJah(j)
+
     @staticmethod
     def getIPAddressForTheInternet() -> str:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -51,206 +78,150 @@ class Hallelu:
         ret = s.getsockname()[0]
         s.close()
         return ret
-        
-    def __init__(self, port: int, ip: str, worksheetdir: str):
-        self.verify_handlers = {
-            "composite": self._verifyComposite,
-            "listComposites": self._verifyListComposite,
-            "feed": self._verifyFeed,
-            "path": self._verifyPath,
-            "field": self._verifyField,
-            "str": self._verifyStr,
-            "int": self._verifyInt,
-            "email": self._verifyEmail,
-            "fmt": self._verifyFmt,
-            "any": self._verifyAny,
-            "regex": self._verifyRegex,
-            "bool": self._verifyBool
-        }
-        self.dir = worksheetdir
-        cmds_schema_fn = os.path.join(self.dir, "worksheetHelp.json")
-        try:
-            with open(cmds_schema_fn,"r") as f:
-                try:
-                    self.cmds_schema = json.load(f)
-                except json.JSONDecodeError as err:
-                    print(err)
-                    raise Exception("Failed to parse " + cmds_schema_fn)
-                except Exception as e:
-                    print(self.cmds_schema)
-                    raise Exception("Failed to parse " + cmds_schema_fn + " " + str(e))
-        except Exception as e:
-            raise Exception("Failed to read " + cmds_schema_fn + str(e))
-        if not os.path.isdir(worksheetdir):
-            raise Exception("Failed to find worksheet dir " + worksheetdir)
-        for fn in os.listdir(path=worksheetdir):
-            if fn == "worksheetHelp.json":
-                continue
-            dfn = os.path.join(worksheetdir,fn)
-            try:
-                with open(dfn, "r") as f:
-                    j = json.load(f)
-                error = self.verifycmds(j)
-                if error:
-                    raise Exception(error)
-                ip, port = self.owncmd(j[0])
-                for cmd in j[1:]:
-                    ip, port = self.nextcmd(ip, port, cmd)
-            except json.JSONDecodeError as err:
-                raise Exception("Failed to parse " + dfn + " " + str(err))
-            except Exception as e:
-                traceback.print_exc()
-                raise Exception("Failed to parse " + dfn + " " + str(e))
-        self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.s.setblocking(0)
-        self.stop = False
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        if not ip:
-            hostip = self.getIPAddressForTheInternet()
-        self.socket.bind((hostip, port))
 
-    def poll(self):
-        while not self.stop:
-            ready = select.select([self.s], [], [], 1)
-            if not ready[0]:
-                continue
-            (data, ip) = self.s.recvfrom(4096)
-            if ip in self.partialMsg:
-                data = self.partialMsg[ip] + data
-                del self.partialMsg[ip]
-            l = int(data[0:4])
-            dl = len(data)
-            if dl < l:
-                self.partialMsg[ip] = data
-                continue
-            if dl > l:
-                self.partialMsg[ip] = data[l:]
-                continue
-            try:
-                j = json.load(data)
-            except json.JSONDecodeError as err:
-                print("Failed to parse cmds ")
-                print(err)
-            except Exception as e:
-                print("Failed to parse cmds " + str(e))
-            self.cmd(j)
-            # self.s.sendto(bytesToSend, ip)
-
-    def _verifyComposite(self, stack: list, cmd: any, schema: any) -> str:
-        if not isinstance(cmd, dict):
-            return Error(stack, "\nExpecting " + str(schema) + "\ngot: " + str(cmd))
-        for k in cmd.keys():
-            stack.append(k)
-            if k not in schema:
-                return Error(stack, "\nExpecting: " + str(list(schema.keys())) + "\ngot: " + k)
-            error = self._verifycmd(stack, cmd[k], schema[k])
-            if error:
-                return error
-            stack.pop()
-        for k in schema.keys():
-            if k in ["type", "desc", "choice", "eg", "default"]:
-                continue
-            if "default" not in schema[k]:
-                # Mandatory
-                if k not in cmd:
-                    stack.append(k)
-                    return Error(stack, "missing attribute " + k)
-            elif schema[k]["default"] is None:
-                # Optional
-                pass
-            else:
-                # default value
-                pass
-
-    def _verifyListComposite(self, stack: list, cmd: any, schema: any) -> str:
-        if not isinstance(cmd, list):
-            return Error(stack, "\nExpecting " + str(schema) + "\ngot: " + str(cmd))
-        for i, j in enumerate(cmd):
-            stack.append("e"+str(i))
-            error = self._verifyComposite(stack, j, schema)
-            if error:
-                return error
-            stack.pop()
-
-    def _verifyFeed(self, stack: list, cmd: any, schema: any) -> str:
-        if not isinstance(cmd, str):
-             return Error(stack, "\nExpecting " + str(schema) + "\ngot: " +
-                          str(cmd) + " " + str(type(cmd)))
-
-    def _verifyPath(self, stack: list, cmd: any, schema: any) -> str:
-        if not isinstance(cmd, str):
-             return Error(stack, "\nExpecting " + str(schema) + "\ngot: " +
-                          str(cmd) + " " + str(type(cmd)))
-
-    def _verifyField(self, stack: list, cmd: any, schema: any) -> str:
-        if not isinstance(cmd, str):
-             return Error(stack, "\nExpecting " + str(schema) + "\ngot: " +
-                          str(cmd) + " " + str(type(cmd)))
-
-    def _verifyStr(self, stack: list, cmd: any, schema: any) -> str:
-        if not isinstance(cmd, str):
-             return Error(stack, "\nExpecting " + str(schema) + "\ngot: " +
-                          str(cmd) + " " + str(type(cmd)))
-
-    def _verifyInt(self, stack: list, cmd: any, schema: any) -> str:
-        if not isinstance(cmd, int):
-             return Error(stack, "\nExpecting " + str(schema) + "\ngot: " +
-                          str(cmd) + " " + str(type(cmd)))
-
-    def _verifyEmail(self, stack: list, cmd: any, schema: any) -> str:
-        if not isinstance(cmd, str):
-             return Error(stack, "\nExpecting " + str(schema) + "\ngot: " + str(cmd))
-
-    def _verifyFmt(self, stack: list, cmd: any, schema: any) -> str:
-        if not isinstance(cmd, str):
-             return Error(stack, "\nExpecting " + str(schema) + "\ngot: " + str(cmd))
-
-    def _verifyBool(self, stack: list, cmd: any, schema: any) -> str:
-        if not isinstance(cmd, bool):
-             return Error(stack, "\nExpecting " + str(schema) + "\ngot: " +
-                          str(cmd) + " " + str(type(cmd)))
-
-    def _verifyAny(self, stack: list, cmd: any, schema: any) -> str:
+    def createJah(self, cmd: dict) -> None:
+        with open(os.path.join(self.halleludir,"jahs_"+self.id+".json"),"r") as f:
+        # TODO; create jah process.
+        # - create in hallelu dir a jah file with cmd
+        # - spawn jah
+        # - wait for jah to start up.
+        # TODO; how to create on other computers?
+        #       Summit Hallelu should know which host is least busy,
+        #       using keep-alives between the Hallelu.
+        #       Requests from children can go directly to the summit Hallelu
+        #       on another host.
+        #         Child --request host--> Summit
+        #         Child --exec command-->host
         pass
 
-    def _verifyRegex(self, stack: list, cmd: any, schema: any) -> str:
-        if not isinstance(cmd, str):
-             return Error(stack, "\nExpecting " + str(schema) + "\ngot: " +
-                          str(cmd) + " " + str(type(cmd)))
+    def removeHalleluFiles(self) -> None:
+        for fn in os.listdir(path=self.halleludir):
+            if not fn.endswith(".json"):
+                continue
+            if fn == "hosts.json":
+                # reset host usage.
+                with open(os.path.join(self.halleludir,"hosts.json"),"r") as f:
+                    j = josn.load(f)
+                    for host in j:
+                        j[host] = {}
+                with open(os.path.join(self.halleludir,"hosts.json"),"w") as f:
+                    json.dumps(f,j)
+                conitnue
+            if not fn.startswith("hall_"):
+                continue
+            os.remove(os.path.join(self.halleludir,fn))
+        
+    def init_socket(self,ip: str, port: int):
+        self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.s.settimeout(5)  # Blocks for 5 seconds when nothing to process.
+        # '' is ENYADDR, 0 causes bind to select a random port.
+        # IPv6 requires socket.bind((host, port, flowinfo, scope_id))
+        self.s.bind((self.ip, self.port))
+        if not self.port:
+            # bind selected a random port, get it!
+            self.port = self.s.getsockname()[1]
+
+    def playWorksheets(self) -> None:
+        for title in self.ws_titles:
+            i = self.ip
+            p = self.port
+            for cmd in self.ws.cmds(title):
+                i, p = self.nextcmd(i, p, cmd)
+
+    def getusage(self) -> None:
+        if self.id != "summit":
+            return
+        if self.usage_tick:
+            self.usage_tick -= 1
+            return
+        self.usage_tick = 60
+        # Contact other hosts, get usage.
+        with open(os.path.join(self.halleludir,"hosts.json"),"r") as f:
+            j = json.load(f)
+            for host in j:
+                # TODO; send usage request to hall.
+
+    def poll(self) -> None:
+        if self.id == "summit":
+            self.playWorksheets()
+        while not self.stop:
+            self.getusage()
+            j = self.receiveCmd()
+            if not self.localcmd(j):
+                self.nextcmd(j)
+        for p in self.processes:
+            # Wait for child to terminate
+            p.join()
+
+    def receiveCmd(self) -> dict:
+        ready = select.select([self.s], [], [], 1)
+        if not ready[0]:
+            return None
+        (data, ip) = self.s.recvfrom(4096)
         try:
-            re.compile(cmd)
+            j = json.loads(data.decode('utf-8'))
+        except json.JSONDecodeError as err:
+            print("Failed to parse cmds from " + str(ip))
+            print(err)
+            return None
         except Exception as e:
-            return Error(stack, "Error in regex " + cmd + " " + str(e))
+            print("Failed to parse cmds " + str(e) + " from " + str(ip))
+            return None
+        return j
 
-    def _verifycmd(self, stack: list, cmd: any, schema: any) -> str:
-        t = schema["type"]
-        if t not in self.verify_handlers:
-            if t.endswith(".macro"):
-                if t not in self.cmds_schema:
-                    return Error(stack, "Unknonw macro named " + t)
-                return self._verifycmd(stack, cmd, self.cmds_schema[t])
-            else:
-                return Error(stack, "Unknown type " + t)
-        return self.verify_handlers[t](stack, cmd, schema)
+    def localCmd(self, j: dict) -> bool:
+        if self.ws.cmdTitle(j):
+            # Follow-on commands are those with titles.
+            return False
+        msg = json.dumps(j).encode('utf-8')
+        with open(os.path.join(self.halleludir,"jahs_"+self.id+".json"),"r") as f:
+            j = json.load(f)
+            for jah in j:
+                sock.sendto(msg, (j["ip"], j["port"]))
+        return True
 
-    def verifycmds(self, j: any) -> str:
-        for cmd in j:
-            name = list(cmd.keys())[0]
-            if name not in self.cmds_schema:
-                return Error([], "Unexpected cmd name " + name)
-            error = self._verifycmd([name], cmd[name], self.cmds_schema[name])
-            if error:
-                return "Error in cmd " + name + " " + error
-
-    def owncmd(self, j: any) -> (str, int):
-        return ("", 0)
-
-    def nextcmd(self, ip:str, port: int, j: any) -> (str, int):
-        return ("", 0)
+    def nextcmd(self, cmd: dict) -> (str, int):
+        if cmd == None:
+            return
+        cmdtitle = self.ws.cmdTitle(cmd)
+        fn = "hall_" + cmdtitle + ".json"
+        j = {"port": 0, "ip": self.ip, "cmd": cmd}
+        if os.path.exists(os.path.join(self.halleludir,fn)):
+            with open(os.path.join(self.halleludir,fn),"r") as f:
+                j = json.load(f)
+            return (j["ip"], j["port"])
+        with open(os.path.join(self.halleludir,fn),"w") as f:
+            json.dump(f,j)
+        p = Process(target=self.main,
+                    args=(self.worksheetdir, cmdtitle, "-i "+self.ip))
+        self.processes.add(p)
+        p.start()
+        while not j["port"]:
+            with open(os.path.join(self.halleludir,fn),"r") as f:
+                j = json.load(f)
+            sleep(0.5)
+        return (j["ip"], j["port"])
 
     @staticmethod
     def main():
-        Hallelu(port=1234, ip="", worksheetdir="./worksheets")
+        parser = argparse.ArgumentParser(description="Hallelu database controller")
+        parser.add_argument('worksheetdir', help="Path to worksheet directory")
+        parser.add_argument('halleludir', help="Path to hallelu directory")
+        parser.add_argument('id', help="Unique name for this Hallelu is the feed name for the cmd. The summit Hallelu has a name of summit", nargs='?', const="summit", type=str)
+        parser.add_argument('-p', '--port', help="Override automatic port allocation, use this port instead")
+        parser.add_argument('-i', '--ip', help="Limit comms to a particular interface by specifying the IP address for that interface, otherwise packets on all interfaces are processed.")
+        args = parser.parse_args()
+        if args.ip == None:
+            # IPv4: '' is INADDR_ANY i.e. all interfaces.
+            args.ip = ''
+        if args.port == None:
+            # port 0 means select any port, random selection.
+            args.port = 0
+        print("Hallelu " + str(args.ip) + ":" + str(args.port))
+        h = Hallelu(port=args.port, ip=args.ip, identification=args.id, 
+                worksheetdir=args.worksheetdir,
+                halleudir=args.halleludir)
+        h.poll()
 
 
 if __name__ == "__main__":

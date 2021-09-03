@@ -1,71 +1,73 @@
 [
     {"files": {
-        "p": {
-            "p": "test/Hallelulajah/data",
-            "d": 1,
-            "ro": "test/Hallelulajah/data_processed",
-            "fs": [
-                {"f": "directory.schema.files", "re": "title\\.txt"},
-                {"f": "directory.attributes.files", "re": "company_attributes\\.csv"},
-                {"f": "directory.company.files", "re": "company\\.csv"},
-                {"f": "directory.country.files", "re": "country\\.csv"},
-                {"f": "directory.pbx.files", "re": "pbx\\.csv"},
-                {"f": "directory.new.files", "re": ".*\\.csv"}
+        "root": "directory.files",
+        "path": {
+            "path": "test/Hallelulajah/data",
+            "depth": 1,
+            "readonly": "test/Hallelulajah/data_processed",
+            "fields": [
+                {"feed": "{root}.schema", "regex": "title\\.txt"},
+                {"feed": "{root}.attributes", "regex": "company_attributes\\.csv"},
+                {"feed": "{root}.company", "regex": "company\\.csv"},
+                {"feed": "{root}.country", "regex": "country\\.csv"},
+                {"feed": "{root}.pbx", "regex": "pbx\\.csv"},
+                {"feed": "{root}.new", "regex": ".*\\.csv"}
             ]
         }
     }},
     {"loadf": {
-        "files": "directory.attributes.files",
-        "f": "directory.attributes",
-        "s": {"file": {"f": "file.schema", "oracleTable": "ATTRIBUTES"} },
+        "files": "directory.files.attributes",
+        "feed": "directory.attributes",
+        "schema": {"file": {"feed": "directory.files.schema", "filetype": {"oracleTable": "ATTRIBUTES"} } },
         "fstats": "directory.attributes.stats"
     }},
     {"loadf": {
-        "files": "directory.company.files",
-        "f": "directory.company",
-        "s": {"file": {"f": "directory.schema.files", "oracleTable": "COMPANY"} },
+        "files": "directory.files.company",
+        "feed": "directory.company",
+        "schema": {"file": {"feed": "directory.files.schema", "filetype": {"oracleTable": "COMPANY"} } },
         "fstats": "directory.company.stats"
     }},
     {"loadf": {
-        "files": "directory.country.files",
-        "f": "directory.country",
-        "s": {"file": {"f": "directory.schema.files", "oracleTable": "COUNTRY"} },
-        "fstats": "directory.company.stats"
+        "files": "directory.files.country",
+        "feed": "directory.country",
+        "schema": {"file": {"feed": "directory.files.schema", "filetype": {"oracleTable": "COUNTRY"} } },
+        "fstats": "directory.country.stats"
     }},
     {"loadf": {
-        "files": "directory.pbx.files",
-        "f": "directory.pbx",
+        "files": "directory.files.pbx",
+        "feed": "directory.pbx",
         "fstats": "stats.pbx",
-        "s": {"file": { "f": "directory.schema.files", "oracleTable": "PBX"} }
+        "schema": {"file": { "feed": "directory.files.schema", "filetype": {"oracleTable": "PBX"} } } 
     }},
     {"expand": {
-        "f": "directory.pbx.telephone",
-        "i": "directory.pbx",
-        "j": {
-            "fs": [{"f": "directory.pbx.COUNTRY_ID"}],
-            "w": "directory.country",
-            "o": [{"f": "directory.country.COUNTRY_ID"}]
+        "feed": "directory.pbx.telephone",
+        "input": "directory.pbx",
+        "join": {
+            "fields": [{"field": "directory.pbx.COUNTRY_ID"}],
+            "with": "directory.country",
+            "on": [{"field": "directory.country.COUNTRY_ID"}]
         },
-        "a": {
-            "a": "directory.pbx.TELEPHONE",
+        "add": {
+            "add": "directory.pbx.TELEPHONE",
             "fmt": "{}{}{}{}",
-            "fs": [
-                {"f": "directory.country.CC"},
-                {"f": "directory.pbx.AREACODE"},
-                {"f": "directory.pbx.LOCALCODE"},
-                {"f": "directory.pbx.SUBSCRIBER"}
+            "fields": [
+                {"field": "directory.country.CC"},
+                {"field": "directory.pbx.AREACODE"},
+                {"field": "directory.pbx.LOCALCODE"},
+                {"field": "directory.pbx.SUBSCRIBER"}
             ]
         }
     }},
     {"alert": {
-        "f": "directory.new.files",
-        "t": "SUM",
-        "e": "${EMAIL}",
-        "p": 60
+        "input": "directory.files.new",
+        "sumtype": "SUM",
+        "email": "{EMAIL}",
+        "period": 60
     }},
     {"alert": {
-        "t": "SUM",
-        "e": "${EMAIL}",
-        "p": 60
+        "feed": "directory.alerts",
+        "sumtype": "SUM",
+        "email": "{EMAIL}",
+        "period": 60
     }}
 ]
