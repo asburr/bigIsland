@@ -219,7 +219,11 @@ class MWorksheets:
     def _paramsComposite(
         self, cmd: any, parent: str, schema: any, params: dict, selected: dict,
         description: dict
-    ) -> None:
+    ) -> bool:
+        retval = False
+        if "default" in schema and schema["default"] is None:
+            opt = parent+".option"
+            params[opt] = "option"
         for k in schema.keys():
             if k in self.keyfields:
                 continue
@@ -227,12 +231,21 @@ class MWorksheets:
                 nxtcmd = cmd.get(k,None)
             else:
                 nxtcmd = None
-            self._paramscmd(nxtcmd, parent+"."+k, schema[k], params, selected, description)
+            if self._paramscmd(nxtcmd, parent+"."+k, schema[k], params, selected, description):
+                retval = True
+        if "default" in schema and schema["default"] is None:
+            opt = parent+".option"
+            selected[opt] = retval
+        return retval
 
     def _paramsListComposite(
         self, cmd: any, parent: str, schema: any, params: dict, selected: dict,
         description: dict
-    ) -> None:
+    ) -> bool:
+        retval = False
+        if "default" in schema and schema["default"] is None:
+            opt = parent+".option"
+            params[opt] = "option"
         if cmd is not None:
             params[parent] = "addbutton"
             selected[parent] = True
@@ -240,34 +253,51 @@ class MWorksheets:
                 field = parent+"."+str(i)
                 params[field] = "deletebutton"
                 selected[field] = True
-                self._paramsComposite(j, field, schema, params, selected, description)
+                if self._paramsComposite(j, field, schema, params, selected, description):
+                    retval = True
+        if "default" in schema and schema["default"] is None:
+            opt = parent+".option"
+            selected[opt] = retval
+        return retval
 
     def _paramscmd(
         self, cmd: any, parent: str, schema: any, params: dict, selected: dict,
         description: dict
-    ) -> None:
+    ) -> bool:
+        retval = False
+        if "default" in schema and schema["default"] is None:
+            opt = parent+".option"
+            params[opt] = "option"
         t = schema["type"]
         if t in ["feed", "feedRef", "path", "field", "str", "email", "fmt",
                  "any", "regex"]:
             params[parent] = "str"
             if cmd is not None:
                 selected[parent] = cmd
+                retval = True
         elif t in ["int", "bool"]:
             params[parent] = "int"
             if cmd is not None:
                 selected[parent] = str(cmd)
+                retval = True
         elif t in self.params_handlers:
             if t == "choice":
                 params[parent] = [x for x in schema.keys() if x not in self.keyfields]
                 if cmd is None or len(cmd) == 0:
-                    selected[parent] = ""
+                    pass
                 else:
+                    retval = True
                     selected[parent] = list(cmd.keys())[0]
-            self.params_handlers[t](cmd, parent, schema, params, selected, description)
+            if self.params_handlers[t](cmd, parent, schema, params, selected, description):
+                retval = True
         else:
             raise Exception("Unexpected type " + t)
         if "desc" in schema:
             description[parent] = schema["desc"]
+        if "default" in schema and schema["default"] is None:
+            opt = parent+".option"
+            selected[opt] = retval
+        return retval
 
     def paramsCmd(self, outputs: str) -> (str, dict, dict):
         cmd = self.feeds[outputs.split("\n")[0]][1]
@@ -280,26 +310,39 @@ class MWorksheets:
             params=params, selected=selected, description=description)
         return (cmdname, cmd, params, selected, description)
 
+    def fieldInSelected(self, field: str, selected: dict) -> bool:
+        if field in selected:
+            return True
+        for key in selected.keys():
+            if key.startswith(field):
+                return True
+        return False
+
     def _updateComposite(
         self, cmd: any, parent: str, schema: any, selected: dict
-    ) -> None:
+    ) -> any:
         for k in schema.keys():
             if k in self.keyfields:
                 continue
             field = parent+"."+k
-            if cmd:
-                if field not in selected:
+            if cmd is not None:
+                if not self.fieldInSelected(field,selected):
                     if k in cmd:
                         del cmd[k]
                 else:
-                    cmd[k] = self._updatecmd(cmd.get(k,None), field, schema[k], selected)
+                    t = self._updatecmd(cmd.get(k,None), field, schema[k], selected)
+                    if t is not None:
+                        cmd[k] = t
             else:
                 if field in selected:
-                    cmd = {k: self._updatecmd(None, field, schema[k], selected)}
+                    t = self._updatecmd(None, field, schema[k], selected)
+                    if t is not None:
+                        cmd = {k: t}
+        return cmd
 
     def _updateListComposite(
         self, cmd: any, parent: str, schema: any, selected: dict
-    ) -> None:
+    ) -> any:
         if cmd is not None:
             delete = []
             for i, j in enumerate(cmd):
@@ -310,16 +353,27 @@ class MWorksheets:
                     cmd[i] = self._updateComposite(j, field, schema, selected)
             for i in reversed(delete):
                 del cmd[i]
+        return cmd
 
     def _updatecmd(
         self, cmd: any, parent: str, schema: any, selected: dict
-    ) -> None:
+    ) -> any:
         t = schema["type"]
         if t in ["feed", "feedRef", "path", "field", "str", "email", "fmt",
                  "any", "regex"]:
             return selected.get(parent, None)
-        elif t in ["int", "bool"]:
-            return selected.get(parent, None)
+        elif t in ["int"]:
+            i = selected.get(parent, None)
+            if i is None:
+                return None
+            return int(i)
+        elif t in ["bool"]:
+            b = selected.get(parent, None)
+            if b == "True":
+                return True
+            if b == "False":
+                return False
+            return None
         elif t in self.update_handlers:
             if t == "choice":
                 k = selected.get(parent, None)
@@ -327,22 +381,27 @@ class MWorksheets:
                     return {}
                 if k not in cmd:
                     cmd = {k: {}}
-            self.update_handlers[t](cmd, parent, schema, selected)
+            return self.update_handlers[t](cmd, parent, schema, selected)
         else:
             raise Exception("Unexpected type " + t)
 
-    def updateCmd(self, wsn: str, cmd: dict, selected: dict) -> None:
+    def updateCmd(self, wsn: str, cmd: dict, selected: dict) -> str:
         cmdname = self.cmdName(cmd)
         backup = copy.deepcopy(cmd[cmdname])
-        self._updatecmd(
+        # print(json.dumps(selected, indent=4, sort_keys=True))
+        cmd[cmdname] = self._updatecmd(
             cmd[cmdname], parent="", schema=self.schema[cmdname],
             selected=selected)
+        # print(json.dumps(self.ws[wsn], indent=4, sort_keys=True))
+        error = ""
         try:
-            self.verifycmds(self.ws[wsn])
+            error = self.verifycmds(self.ws[wsn])
         except Exception as e:
-            raise e
-        del cmd[cmdname]
-        cmd[cmdname] = backup
+            error = str(e)
+        if error:
+            del cmd[cmdname]
+            cmd[cmdname] = backup
+        return error
         
     def _putparamsComposite(
         self, cmd: any, parent: str, schema: any, selected: dict
@@ -358,6 +417,8 @@ class MWorksheets:
             j = self._putparamscmd(nxtcmd, parent+"."+k, schema[k], selected)
             if j is not None:
                 newcmd[k] = j
+        if len(newcmd) == 0:
+            return None
         return newcmd
 
     def _putparamsListComposite(
@@ -588,7 +649,7 @@ class MWorksheets:
         if "key" in schema:
             return self._Error(stack, "\nUnexpected key in " + str(schema))
         if not cmd.isalnum() and not os.sep in cmd:
-             return self._Error(stack, "\nExpecting path, alnum or " + os.sep
+             return self._Error(stack, "\nExpecting path"
                           + "\ngot: " + str(cmd))
 
     def _verifyField(self, stack: list, cmd: any, schema: any) -> str:

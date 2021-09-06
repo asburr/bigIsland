@@ -5,7 +5,7 @@
             "path": "test/Hallelulajah/pcap",
             "depth": 1,
             "readonly": "test/Hallelulajah/pcap_processed",
-            "fields": [
+            "feeds": [
                 {"feed": "{root}.pcap", "regex": ".*\\.pcap"},
                 {"feed": "{root}.new", "regex": ".*"}
             ]

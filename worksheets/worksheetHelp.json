@@ -18,15 +18,15 @@
             }, "readonly": {
                 "type": "path", "default": null,
                 "desc": "(ro) is used when path (p) is read only. Touch-files are created to track prior processed files. (ro) is a path on a writable file system where the touch-files can be created and deleted"
-            }, "fields": {
+            }, "feeds": {
                 "type": "listComposites",
                 "feed": {
-                    "type": "feed", "default": null,
+                    "type": "feed",
                     "desc": "Label the feed of file names. Use format to include root, {root}.name."
                 },
                 "regex": {
-                    "type": "regex", "default": null,
-                    "desc": "Regex string. For a single feed use '*' to match all files"
+                    "type": "regex",
+                    "desc": "Regex string. For a single feed use '.*' to match all files"
                 }
             }
         },
@@ -75,7 +75,7 @@
                 "type": "int", "default": 0,
                 "desc": "CSV row count for files containing a CSV header row at the row count. Rows prior to the header row, are ignored and not processed as data nor headers."
             }, "file": {
-                "type": "composite", "default": null,
+                "type": "composite",
                 "desc": "Schema is found in a separate file",
                 "feed": {
                      "type": "feedRef",

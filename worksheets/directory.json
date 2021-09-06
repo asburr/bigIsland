@@ -5,7 +5,7 @@
             "path": "test/Hallelulajah/data",
             "depth": 1,
             "readonly": "test/Hallelulajah/data_processed",
-            "fields": [
+            "feeds": [
                 {"feed": "{root}.schema", "regex": "title\\.txt"},
                 {"feed": "{root}.attributes", "regex": "company_attributes\\.csv"},
                 {"feed": "{root}.company", "regex": "company\\.csv"},
