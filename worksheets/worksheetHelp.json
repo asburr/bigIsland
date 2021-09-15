@@ -1,4 +1,6 @@
 {
+    "type": "composite",
+    "desc": "Hallelujah commands",
     "files": {
         "type": "composite",
         "desc": "outputs fully qualified file names of not (ever) previously processed files.",
@@ -115,32 +117,38 @@
         }
     }, "logicalcondition.macro": {
         "type": "composite",
-        "desc": "logical condition",
+        "desc": "logical condition i.e. l:a o:eq r:{ f:b }",
         "l": {
             "type": "field",
             "desc": "left handside of the condition is a field name"
         }, "o": {
-            "type": "str", "default": "eq",
+            "type": "str", "default": "eq", "desc": "Logical condition",
             "choice": ["eq", "ne", "gt", "lt", "gte", "lte"]
-        }, "f": {
-            "type": "field", "default": null,
-            "desc": "right handside of the condition is a field name"
-        }, "v": {
-            "type": "any", "default": null,
-            "desc": "right handside of the condition is a value"
+        }, "r": {
+            "type": "choice", "desc": "right handside",
+            "f": {
+                "type": "field",
+                "desc": "field name"
+            }, "v": {
+                "type": "any",
+                "desc": "value"
+            }
         }
     }, "logicalexpression.macro": {
         "type": "composite",
-        "desc": "A nested expression, i.e. (a eq 1 and b eq 2) or (a eq 3) is, { re:{ rc:{ l:a o:eq v:1 } o:and rc:{ l:b o:eq v:2 } } o:or c:{ l:a o:eq v:3 } }",
-        "rc": {
-            "type": "logicalcondition.macro", "default": null
-        }, "re": {
-            "type": "logicalexpression.macro", "default": null
+        "desc": "A nested expression, i.e. a eq 1 and b eq 2, l:{ c:{ l:a o:eq r:{ v:1 }} o:and c:{ c:{ l:b o:eq: r:{ v:2 }}}}",
+        "l": {
+            "type": "choice", "desc": "Left handside of the expression",
+            "c": {
+                "type": "logicalcondition.macro", "desc": "condition"
+            }, "e": {
+                "type": "logicalexpression.macro", "desc": "expression"
+            }
         }, "o": {
-            "type": "str", "default": "and",
+            "type": "str", "default": "and", "desc": "logicial condition",
             "choice": ["and", "or"]
         }, "c": {
-            "type": "logicalcondition.macro"
+            "type": "logicalcondition.macro", "desc": "condition"
         }
     }, "fieldwhere.macro": {
         "type": "composite",
@@ -183,24 +191,25 @@
         }
     }, "loadc": {
         "type": "composite",
-        "desc": "Load a count of the occurence of field(s) identified explicitly by name or, the default is count all fields. Count can be partitioned by field(s) from the same feed. { f:data i:datai fs:[ { f:<fieldwhere> } ] p:[ { f:<fieldPartition> w:<logicalExpression> } ] }",
+        "desc": "Count occurence of values in field(s)",
         "feed": {
             "type": "feed", "key": true
         }, "input": {
             "type": "feedRef", "desc": "The other feed"
-        }, "fields": {
-            "type": "listComposites",
-            "field": {
-                "type": "fieldwhere.macro"
+        }, "count type": {
+            "type": "choice",
+            "all": {
+                "type": "bool", "default": true, "desc": "count all fields"
+            }, "fields": {
+                "type": "listComposites", "desc": "Fields to count",
+                "field": {
+                    "type": "fieldwhere.macro"
+                }
             }
         }, "partition": {
-            "type": "listComposites",
+            "type": "listComposites", "default": null, "desc": "Partition count",
             "field": {
                 "type": "fieldpartition.macro"
-            },
-            "where": {
-                "type": "logicalexpression.macro", "default": null,
-                "desc": "restrict count or, default is to count all records"
             }
         }
     }, "expand": {
