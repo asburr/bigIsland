@@ -66,7 +66,7 @@ class WiWS(wx.Frame):
     def on_addcmd(self, event):
         wsn = self.ws_selection.GetValue()
         QueryParams(parent=self, title="New command for " + wsn,
-             style=wx.OK | wx.NO, params={"select command": self.ws.cmd_titles()}, selected={}, verify=None, descriptions={}, on_close=self.wsaddcmd_close, getOptions=self.ws.paramsCmd)
+             style=wx.OK | wx.NO, params={"select command": self.ws.cmd_titles()}, selected={}, verify=None, descriptions=self.ws.cmd_descriptions(), on_close=self.wsaddcmd_close, getOptions=self.ws.paramsCmd)
 
     def wsaddcmd_close(self, event):
         wsn = self.ws_selection.GetValue()

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # This file is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
@@ -30,6 +29,11 @@ except Exception:
 class NamedButton(wx.Button):
     def __init__(self, parent, title: str, name:str):
         wx.Button.__init__(self, parent, label=title)
+        self.name = name
+
+class NamedComboBox(wx.ComboBox):
+    def __init__(self, parent, choices: list, name: str):
+        wx.Button.__init__(self, parent, choices=choices)
         self.name = name
 
 class QueryParams(wx.Frame):
@@ -72,10 +76,9 @@ class QueryParams(wx.Frame):
         self.spanel = wx.lib.scrolledpanel.ScrolledPanel(self.panel)
         self.spanel.SetupScrolling()
         self.svbox = wx.BoxSizer(wx.VERTICAL)
-        self.choices = {}
-        self.selectedchoices = []
         self.spanel.SetSizer(self.svbox)
         self.vbox.Add(self.spanel, proportion=1, flag=wx.EXPAND)
+        self.descriptions = {}
         self.updateParams("", params, selected, descriptions)
         self.spanel.Layout()
         self.panel.SetSizer(self.vbox)
@@ -83,6 +86,9 @@ class QueryParams(wx.Frame):
         self.showFields()
 
     def updateParams(self, after: str, params: dict, selected: dict, descriptions: dict) -> None:
+        for name in descriptions:
+            if name not in self.descriptions:
+                self.descriptions[name] = descriptions[name]
         pos = 0
         for i, n in enumerate(self.params.keys()):
             if n.startswith(after):
@@ -105,6 +111,7 @@ class QueryParams(wx.Frame):
             value = str(selected.get(name, ""))
             flags = wx.ALL | wx.EXPAND
             proportion = 0
+            descname = name
             if typ == "str":
                 proportion = 1
                 if value is None:
@@ -139,22 +146,19 @@ class QueryParams(wx.Frame):
             elif isinstance(typ, list):  # Choice
                 if len(value) == 0:
                     value = typ[0]  # No selection, default to first choice.
-                self.selectedchoices.append((name, name+"."+value))
-                self.params[name] = wx.ComboBox(self.spanel, choices=typ)
-                # on_choice need the name in order to show and hide params.
-                # TODO; subclass ComboBox, add name into the object.
-                self.choices[self.params[name].GetId()] = name
+                self.params[name] = NamedComboBox(self.spanel, choices=typ,name=name)
                 self.params[name].SetValue(value)
                 self.params[name].Bind(event=wx.EVT_COMBOBOX, handler=self.on_choice)
+                descname = value
             else:
                 raise Exception("Exception unknown type=" + str(typ))
             hbox = wx.BoxSizer(wx.HORIZONTAL)
             self.titles[name] = wx.StaticText(self.spanel, -1, name)
-            hbox.Add(self.titles[name], proportion=1, flag=wx.ALIGN_LEFT | wx.ALL | wx.EXPAND) 
-            hbox.Add(self.params[name], proportion=1, flag=wx.ALL | wx.EXPAND)
-            if name in descriptions:
-                self.desc[name] = wx.TextCtrl(self.spanel, value=descriptions[name], style=wx.TE_MULTILINE|wx.TE_READONLY)
-                hbox.Add(self.desc[name], proportion=proportion, flag=flags)
+            hbox.Add(self.titles[name], proportion=0, flag=wx.ALIGN_LEFT) 
+            hbox.Add(self.params[name], proportion=proportion, flag=wx.ALL | wx.EXPAND)
+            if descname in descriptions:
+                self.desc[name] = wx.TextCtrl(self.spanel, value=descriptions[descname], style=wx.TE_MULTILINE|wx.TE_READONLY)
+                hbox.Add(self.desc[name], proportion=1, flag=flags)
             if pos < self.svbox.GetItemCount():
                 self.svbox.Insert(pos, hbox, flag=flags)
             else:
@@ -224,15 +228,6 @@ class QueryParams(wx.Frame):
                         selected["default"+name] = e.GetHint()
         return selected
 
-    def setChoice(self, name: str, value: str) -> None:
-        l = []
-        for choicename, selectedname in self.selectedchoices:
-            if choicename == name:
-                l.append((name, name + "." + value))
-            else:
-                l.append((choicename, selectedname))
-        self.selectedchoices = l
-
     def getValue(self, name: str, typ: str) -> (any, str):
         if typ == "str":
             return self.params[name].GetValue(), typ
@@ -297,7 +292,13 @@ class QueryParams(wx.Frame):
 
     def on_choice(self, event):
         cb = event.GetEventObject()
-        self.setChoice(self.choices[cb.GetId()], cb.GetValue())
+        value = cb.GetValue()
+        name = cb.name
+        if name in self.desc:
+            if value in self.descriptions:
+                self.desc[name].SetValue(self.descriptions[value])
+            else:
+                self.desc[name].SetValue("")
         self.showFields()
         
     def on_deleteButton(self, event) -> None:
