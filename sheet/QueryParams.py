@@ -18,12 +18,19 @@
 # add more to a param list and edit param values.
 try:
     import wx
+    import wx.lib.scrolledpanel
 except Exception:
     print("Failed to import wx, install instructions:")
     print("sudo apt-get install -y libsdl2-2.0-0")
     print("sudo apt-get install libgtk-3-dev")
     print("pip3 install -U -f https://extras.wxpython.org/wxPython4/extras/linux/gtk3/ubuntu-18.04 wxPython")
     exit(1)
+
+
+class NamedButton(wx.Button):
+    def __init__(self, parent, title: str, name:str):
+        wx.Button.__init__(self, parent, label=title)
+        self.name = name
 
 class QueryParams(wx.Frame):
 #class QueryParams(wx.Dialog):

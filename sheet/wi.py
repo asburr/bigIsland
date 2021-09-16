@@ -31,11 +31,6 @@ from magpie.src.mworksheets import MWorksheets
 from sheet.QueryParams import QueryParams
 from sheet.Grid import WiGrid
 
-class NamedButton(wx.Button):
-    def __init__(self, parent, title: str, name:str):
-        wx.Button.__init__(self, parent, label=title)
-        self.name = name
-
 class WiWS(wx.Frame):
     def __init__(self, cfg):
         wx.Frame.__init__(self, parent=None, title="Worksheet")
