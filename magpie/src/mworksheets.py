@@ -20,6 +20,10 @@ from difflib import SequenceMatcher
 import copy
 
 
+class MWorkSheetException(Exception):
+    pass
+
+
 class MWorksheets:
     def __init__(self, dir: str):
         self.verify_handlers = {
@@ -68,8 +72,8 @@ class MWorksheets:
             "listComposites": self._updateListComposite,
             "choice": self._updateComposite
         }
-        self.keyfields =  ["state", "type", "desc", "choice", "eg", "default"]
-        self.keydatafields =  ["__edit__"]
+        self.keyfields =  ["__edit__", "__state__", "type", "desc", "choice", "eg", "default"]
+        self.keydatafields =  ["__edit__", "__state__"]
         self.dir = dir
         if not os.path.isdir(self.dir):
             raise Exception("Failed to find worksheet dir " + self.dir)
@@ -111,9 +115,9 @@ class MWorksheets:
             for cmd in self.ws[wsn]:
                 feeds = self.cmdFeedRef(cmd)
                 if len(feeds) == 0:
-                    cmd["state"] = "pending"
+                    cmd["__state__"] = "pending"
                 else:
-                    cmd["state"] = "blocked"
+                    cmd["__state__"] = "blocked"
                 feeds = self.cmdFeed(cmd)
                 for feed in feeds:
                     if feed in self.feeds:
@@ -186,10 +190,10 @@ class MWorksheets:
                 self._expandcmd(self.expandingcmd, self.schema[cmdname])
 
     def cmd_titles(self) -> list:
-        return [x for x in self.schema.keys() if x not in self.keyfields]
+        return [x for x in self.schema.keys() if x not in self.keyfields and not x.endswith(".macro")]
 
     def cmd_descriptions(self) -> list:
-        return {name: self.schema[name]["desc"] for name in self.schema.keys()}
+        return {name: self.schema[name]["desc"] for name in self.schema.keys() if name not in self.keyfields and not name.endswith(".macro")}
 
     def titles(self) -> list:
         return list(self.ws.keys())
@@ -289,8 +293,13 @@ class MWorksheets:
             else:  # Default value
                 selected["default"+parent] = str(schema["default"])
         t = schema["type"]
-        if t in ["feed", "feedRef", "path", "field", "str", "email", "fmt",
-                 "any", "regex"]:
+        if t == "feed":
+            p = parent[:parent.rindex(".")+1]
+            if p not in params:
+                params[p] = "samplebutton"
+            else:
+                params[p] += ",samplebutton"
+        if t in ["feed", "feedRef", "path", "field", "str", "email", "fmt", "any", "regex"]:
             if cmd is not None:
                 params[parent] = "str"
                 selected[parent] = cmd
@@ -385,43 +394,63 @@ print(desc)
         self, cmd: any, parent: str, schema: any, selected: dict
     ) -> any:
         for k in schema.keys():
-            if k in self.keyfields:
-                continue
             field = parent+"."+k
-            if cmd is not None:
-                if not self.fieldInSelected(field,selected):
-                    if k in cmd:
-                        del cmd[k]
+            t = ""
+            try:
+                if k in self.keyfields:
+                    continue
+                if cmd is not None:
+                    if not self.fieldInSelected(field,selected):
+                        if k in cmd:
+                            del cmd[k]
+                    else:
+                        t = self._updatecmd(cmd.get(k,None), field, schema[k], selected)
+                        if t is None:
+                            t = selected.get("default"+field, None)
+                        if t is not None:
+                            cmd[k] = t
                 else:
-                    t = self._updatecmd(cmd.get(k,None), field, schema[k], selected)
-                    if t is None:
-                        t = selected.get("default"+field, None)
-                    if t is not None:
-                        cmd[k] = t
-            else:
-                if field in selected:
-                    t = self._updatecmd(None, field, schema[k], selected)
-                    if t is None:
-                        t = selected.get("default"+field, None)
-                    if t is not None:
-                        cmd = {k: t}
+                    if field in selected:
+                        t = self._updatecmd(None, field, schema[k], selected)
+                        if t is None:
+                            t = selected.get("default"+field, None)
+                        if t is not None:
+                            cmd = {k: t}
+            except MWorkSheetException as e:
+                raise e;
+            except Exception:
+                raise MWorkSheetException("field \""+field+"\" bad value \""+str(t)+"\"")
         return cmd
 
     def _updateListComposite(
         self, cmd: any, parent: str, schema: any, selected: dict
     ) -> any:
+        fields = []
+        for k in selected.keys():
+            if k.startswith(parent):
+                if k[k.rindex(".")+1:].isdigit():
+                    fields.append(k)
         if cmd is not None:
-            delete = []
             for i, j in enumerate(cmd):
                 field = parent+"."+str(i)
+                if field in fields:
+                    fields.remove(field)
                 if field not in selected:
-                    delete.append(i)
+                    # When saved back to disk at this time the deleted
+                    # items are removed.
+                    cmd[i]["__state__"] = "deleted"
                 else:
+                    # Re-added
+                    if "__state__" in cmd[i]:
+                        del cmd[i]["__state__"]
                     cmd[i] = self._updateComposite(j, field, schema, selected)
                     if cmd[i] is None:
                         cmd[i] = selected.get("default"+field, None)
-            for i in reversed(delete):
-                del cmd[i]
+        for field in fields:
+            i = int(field[field.rindex(".")+1:])
+            if i != len(cmd):
+                raise Exception("Adding " + field + " expecting field " + str(len(cmd)))
+            cmd.append(self._updateComposite(None, field, schema, selected))
         return cmd
 
     def _updatecmd(
@@ -456,25 +485,39 @@ print(desc)
 
     # Update values in command from selected values.
     def updateCmd(self, wsn: str, cmd: dict, selected: dict) -> str:
-        cmdname = self.cmdName(cmd)
-        backup = copy.deepcopy(cmd)
-        # Remove command from all the feeds.
-        for feed in self.cmdFeed(backup):
-            del self.feeds[feed]
+        if cmd is not None:
+            cmdname = self.cmdName(cmd)
+            backup = copy.deepcopy(cmd)
+            # Remove command from all the feeds.
+            for feed in self.cmdFeed(cmd):
+                del self.feeds[feed]
+        else:
+            backup = None
+            cmdname = list(selected.keys())[0]
+            cmdname = cmdname[0:cmdname.index(".")]
+            cmd = {cmdname: None}
         # print(json.dumps(selected, indent=4, sort_keys=True))
-        cmd[cmdname] = self._updatecmd(
-            cmd[cmdname], parent=cmdname, schema=self.schema[cmdname],
-            selected=selected)
-        # print(json.dumps(self.ws[wsn], indent=4, sort_keys=True))
         error = ""
         undofeeds = []
         try:
-            # Update feed.
-            feeds = self.cmdFeed(cmd)
-        except KeyError as e:
-            error = "Bad feed name variable: " + str(e)
+            cmd[cmdname] = self._updatecmd(
+                cmd[cmdname], parent=cmdname, schema=self.schema[cmdname],
+                selected=selected)
+            if backup is None:
+                for j in self.sheet(wsn):
+                    if cmdname in j:
+                        return "More than one cmd \"" + cmdname + "\""
+                self.ws[wsn].append(cmd)
+            try:
+                # Update feed.
+                feeds = self.cmdFeed(cmd)
+            except KeyError as e:
+                error = "Bad feed name variable: " + str(e)
+            except Exception as e:
+                error = "Bad feed name " + type(e).__name__ + " " + str(e)
         except Exception as e:
-            error = "Bad feed name " + type(e).__name__ + " " + str(e)
+            error = str(e)
+        # print(json.dumps(self.ws[wsn], indent=4, sort_keys=True))
         if not error:
             try:
                 for feed in feeds:
@@ -492,11 +535,41 @@ print(desc)
             # Restore command
             for feed in undofeeds:
                 del self.feeds[feed]
-            for feed in self.cmdFeed(backup):
-                self.feeds[feed] = (wsn, backup)
-            del cmd[cmdname]
-            cmd[cmdname] = backup[cmdname]
+            if backup is not None:
+                for feed in self.cmdFeed(backup):
+                    self.feeds[feed] = (wsn, backup)
+                del cmd[cmdname]
+                cmd[cmdname] = backup[cmdname]
+            else:
+                del self.ws[wsn][-1]
         return error
+
+    def _purgeCmd(self, cmd: any, schema: any) -> None:
+        if cmd is None:
+            return
+        t = schema["type"]
+        if t == "composite":
+            for k in cmd.keys():
+                if k in self.keyfields:
+                    continue
+                self._purgeCmd(cmd[k], schema[k])
+        elif t == "listComposites":
+            delete = []
+            for i, j in enumerate(cmd):
+                if "__state__" in j:
+                    if j["__state__"] == "deleted":
+                        delete.append(i)
+                for k in j.keys():
+                    if k in self.keyfields:
+                        continue
+                    self._purgeCmd(j[k], schema[k])
+            for i in reversed(delete):
+                del cmd[i]
+
+    # Remove for list all deleted entries (__state__ == deleted)
+    def purgeCmd(self, cmd: dict) -> None:
+        cmdname = self.cmdName(cmd)
+        self._purgeCmd(cmd[cmdname], self.schema[cmdname])
 
     def deleteCmd(self, wsn: str, outputs: str) -> None:
         cmd = self.getCmd(outputs)
@@ -599,7 +672,7 @@ print(desc)
             
     def cmdName(self, cmd: any) -> str:
         for k in cmd.keys():
-            if k not in ["state"]:
+            if k not in ["__state__"]:
                 return k
         raise Exception("cmdName no name")
 
@@ -770,7 +843,7 @@ print(desc)
     def verifycmds(self, j: any) -> str:
         for cmd in j:
             name = list(cmd.keys())[0]
-            if name in ["state"]:
+            if name in ["__state__"]:
                 continue
             if name not in self.schema:
                 return self._Error([], "Unexpected cmd name " + name)
@@ -779,11 +852,11 @@ print(desc)
                 return "Error in cmd " + name + " " + error
 
     def blocked(self) -> list:
-        return [cmd for feed,cmd in self.feeds.items() if cmd["state"] == "blocked"]
+        return [cmd for feed,cmd in self.feeds.items() if cmd["__state__"] == "blocked"]
 
     def pending(self) -> dict:
         for feed,cmd in self.feeds.items():
-            if cmd["state"] == "pending":
+            if cmd["__state__"] == "pending":
                 return cmd
         return None
 
@@ -793,15 +866,15 @@ print(desc)
         cmds = []
         for feed in feeds:
             cmd = self.feeds[feed]
-            cmd["state"] = "ready"
+            cmd["__state__"] = "ready"
             for cmd in self.feeds.values():
-                if cmd["state"] == "blocked":
-                    cmd["state"] = "pending"
+                if cmd["__state__"] == "blocked":
+                    cmd["__state__"] = "pending"
                     for feed in self.cmdinput(cmd):
-                       if self.feeds[feed]["state"] != "ready":
-                           cmd["state"] == "blocked"
+                       if self.feeds[feed]["__state__"] != "ready":
+                           cmd["__state__"] == "blocked"
                            break
-                    if cmd["state"] == "pending":
+                    if cmd["__state__"] == "pending":
                         cmds.append(cmd)
         return cmds
 
@@ -830,13 +903,13 @@ print(desc)
         print("Feeds ready to run")
         for feed in ws.feeds:
             (wsn, cmd) = ws.feeds[feed]
-            if cmd["state"] == "pending":
-                print("    " + feed + " " + cmd["state"])
+            if cmd["__state__"] == "pending":
+                print("    " + feed + " " + cmd["__state__"])
         print("Feeds blocked")
         for feed in ws.feeds:
             (wsn, cmd) = ws.feeds[feed]
-            if cmd["state"] == "blocked":
-                print("    " + feed + " " + cmd["state"])
+            if cmd["__state__"] == "blocked":
+                print("    " + feed + " " + cmd["__state__"])
 
 
 if __name__ == "__main__":

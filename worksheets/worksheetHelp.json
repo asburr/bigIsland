@@ -259,7 +259,7 @@
         }
     }, "alert": {
         "type": "composite",
-        "desc": "{t:SUM e:fred@gmail.com p:60}",
+        "desc": "Email sent to alert of system issues.",
         "feed": {
             "type": "feed", "default": "{input}_alert", "key": true,
             "desc": "Name for the feed of alerts"
@@ -275,13 +275,6 @@
         }, "period": {
             "type": "int", "default": 86400,
             "desc": "This is the period in second in between the email alerts."
-        }
-    }, "get": {
-        "type": "composite",
-        "desc": "Gets json objects from the dataset",
-        "limit": {
-            "type": "int", "default": 100,
-            "desc": "Limit the number of retrieved objects"
         }
     }
 }

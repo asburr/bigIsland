@@ -38,12 +38,13 @@ class NamedComboBox(wx.ComboBox):
 
 class QueryParams(wx.Frame):
 #class QueryParams(wx.Dialog):
-    def __init__(self, parent, title: str, style: int, params: dict, selected: dict, verify: any, descriptions: dict, getOptions: any, on_close: any = None, data: any = None):
-        wx.Dialog.__init__(self, parent=parent, title=title, style=wx.RESIZE_BORDER | wx.CLOSE_BOX)
+    def __init__(self, parent, title: str, style: int, params: dict, selected: dict, verify: any, sample: any, descriptions: dict, getOptions: any, on_close: any = None, data: any = None):
+        wx.Frame.__init__(self, parent=parent, title=title, style=wx.RESIZE_BORDER | wx.CLOSE_BOX)
         if on_close is not None:
             self.Bind(wx.EVT_CLOSE, on_close)
         self.data = data
         self.verify = verify
+        self.sample = sample
         self.getOptions = getOptions
         self.params = {}
         self.titles = {}
@@ -134,6 +135,9 @@ class QueryParams(wx.Frame):
             elif typ == "deletebutton":
                 self.params[name] = NamedButton(self.spanel, "DELETE", name)
                 self.params[name].Bind(wx.EVT_BUTTON, self.on_deleteButton)
+            elif typ == "samplebutton":
+                self.params[name] = NamedButton(self.spanel, "SAMPLE", name)
+                self.params[name].Bind(wx.EVT_BUTTON, self.on_sampleButton)
             elif typ == "int":
                 proportion = 1
                 self.params[name] = wx.TextCtrl(self.spanel, value=value)
@@ -300,6 +304,11 @@ class QueryParams(wx.Frame):
             else:
                 self.desc[name].SetValue("")
         self.showFields()
+        
+    def on_sampleButton(self, event) -> None:
+        if self.sample is None:
+            return
+        self.sample()
         
     def on_deleteButton(self, event) -> None:
         b = event.GetEventObject()

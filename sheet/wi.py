@@ -31,6 +31,20 @@ from magpie.src.mworksheets import MWorksheets
 from sheet.QueryParams import QueryParams
 from sheet.Grid import WiGrid
 
+
+class WiFramedGrid(wx.Frame):
+    def __init__(self, title: str, data: dict):
+        wx.Frame.__init__(self, parent=None, title=title)
+        boxSizer = wx.BoxSizer(wx.VERTICAL)
+        self.panel = wx.Panel(self)
+        self.grid = WiGrid(self.panel,data["titles"], data["rows"])
+        boxSizer.Add(self.grid.getGrid(), proportion=1, flag=wx.EXPAND)
+        self.panel.SetSizer(boxSizer)
+        self.panel.Layout()
+        self.Layout()
+        self.Show()
+
+
 class WiWS(wx.Frame):
     def __init__(self, cfg):
         wx.Frame.__init__(self, parent=None, title="Worksheet")
@@ -66,7 +80,7 @@ class WiWS(wx.Frame):
     def on_addcmd(self, event):
         wsn = self.ws_selection.GetValue()
         QueryParams(parent=self, title="New command for " + wsn,
-             style=wx.OK | wx.NO, params={"select command": self.ws.cmd_titles()}, selected={}, verify=None, descriptions=self.ws.cmd_descriptions(), on_close=self.wsaddcmd_close, getOptions=self.ws.paramsCmd)
+             style=wx.OK | wx.NO, params={"select command": self.ws.cmd_titles()}, selected={}, verify=None, sample=None, descriptions=self.ws.cmd_descriptions(), on_close=self.wsaddcmd_close, getOptions=self.ws.paramsCmd)
 
     def wsaddcmd_close(self, event):
         wsn = self.ws_selection.GetValue()
@@ -78,22 +92,36 @@ class WiWS(wx.Frame):
             return
         (params, selected, desc) = self.ws.paramsCmd(cmd=None, at=cmdname)
         QueryParams(parent=self, title="New command for " + wsn,
-             style=wx.OK | wx.NO, params=params, selected=selected, verify=None, descriptions=desc, on_close=self.wsaddedcmd_close, data=cmdname, getOptions=self.ws.paramsCmd)
+             style=wx.OK | wx.NO, params=params, selected=selected, verify=self.wsaddedcmd_verify, sample=None, descriptions=desc, on_close=self.wsaddedcmd_close, data=cmdname, getOptions=self.ws.paramsCmd)
+
+    def wsaddedcmd_verify(self, qp: QueryParams) -> str:
+        wsn = self.ws_selection.GetValue()
+        selected = qp.getSelected()
+        return self.ws.updateCmd(wsn=wsn, cmd=None, selected=selected)
 
     def wsaddedcmd_close(self, event):
         wsn = self.ws_selection.GetValue()
         qp = event.GetEventObject()
         if qp.res != wx.OK:
             return
-        cmdname = qp.data
-        print("addedcmd " + wsn + " " + cmdname)
+        # cmdname = qp.data
+        selected = qp.getSelected()
+        error = self.ws.updateCmd(wsn=wsn, cmd=None, selected=selected)
+        if len(error) > 0:
+            wx.MessageBox(
+                error,
+                "",
+                wx.OK, self)
+            return
+        self.grid.update(self.titles, self.ws.inputCmdOutput(wsn))
+        self.Show()
 
     def ws_selected(self, event):
         wsn = self.ws_selection.GetValue()
         if wsn == "new worksheet":
             self.addButton.Hide()
             QueryParams(parent=self, title="New worksheet name",
-                 style=wx.OK | wx.NO, params={"Worksheet name": "str"}, selected={}, verify=None, descriptions={}, on_close=self.wsname_close, getOptions=self.ws.paramsCmd)
+                 style=wx.OK | wx.NO, params={"Worksheet name": "str"}, selected={}, verify=None, sample=None, descriptions={}, on_close=self.wsname_close, getOptions=self.ws.paramsCmd)
         else:
             self.addButton.Show()
             self.grid.update(self.titles, self.ws.inputCmdOutput(wsn))
@@ -124,7 +152,11 @@ class WiWS(wx.Frame):
 
     def ws_verify(self, qp: QueryParams) -> str:
         wsn = self.ws_selection.GetValue()
-        return self.ws.updateCmd(wsn=wsn, cmd=self.cmd, selected=qp.getSelected())
+        cmd = self.ws.getCmd(outputs=qp.data)
+        return self.ws.updateCmd(wsn=wsn, cmd=cmd, selected=qp.getSelected())
+
+    def ws_sample(self) -> None:
+        WiFramedGrid(title="sample", data={"titles": ["a","b"], "rows": [[1,2]]})
 
     def OnRowClick(self, event):
         row = event.GetRow()
@@ -132,28 +164,35 @@ class WiWS(wx.Frame):
             return
         wsn = self.ws_selection.GetValue()
         outputs = self.grid.grid.GetCellValue(row, 2)
-        if len(outputs) == 0:
+        if len(outputs) > 0:
+            self.cmd=self.ws.getCmd(outputs);
+        else:
+            cmdname = self.grid.grid.GetCellValue(row, 1)
+            for j in self.ws.sheet(wsn):
+                if cmdname in j:
+                    self.cmd = j
+                    break
+        if self.cmd is None:
             return
-        self.cmd=self.ws.getCmd(outputs);
         cmdname = self.ws.cmdName(self.cmd)
         (params, selected, descriptions) = self.ws.paramsCmd(cmd=self.cmd, at=cmdname)
         QueryParams(parent=self, title=wsn+":"+cmdname,
              style=wx.OK | wx.CANCEL | wx.CAPTION | wx.NO, params=params,
-             selected=selected, descriptions=descriptions, verify=self.ws_verify, on_close=self.ws_close, data=outputs, getOptions=self.ws.paramsCmd)
+             selected=selected, descriptions=descriptions, verify=self.ws_verify, sample=self.ws_sample, on_close=self.ws_close, data=outputs, getOptions=self.ws.paramsCmd)
 
     def ws_close(self, event) -> None:
         wsn = self.ws_selection.GetValue()
         qp = event.GetEventObject()
         if qp.res == wx.OK:
-            # self.ws.putparamsCmd(outputs=qp.data,  selected=qp.getSelected())
-            cmd = self.ws.getCmd(outputs=qp.data)
-            errors = self.ws.updateCmd(wsn=wsn, cmd=cmd, selected=qp.getSelected())
+            errors = self.ws_verify(qp)
             if errors:
                 wx.MessageBox(
                     "Faild: "+errors,
                     "",
                     wx.OK, self)
                 return
+            cmd = self.ws.getCmd(outputs=qp.data)
+            self.ws.purgeCmd(cmd)
             self.grid.update(self.titles, self.ws.inputCmdOutput(wsn))
         elif qp.res == wx.CANCEL:
             self.ws.deleteCmd(wsn=wsn,outputs=qp.data)
