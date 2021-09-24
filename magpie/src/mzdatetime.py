@@ -14,7 +14,7 @@
 #
 # Usage is similar to datetime,
 #  from datetime import timedelta
-#  from magoie.MZdatetime import MZdatetime
+#  from magpie.MZdatetime import MZdatetime
 #  import copy
 #
 #  dt: MZdatetime = MZdatetime()

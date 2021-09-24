@@ -35,6 +35,9 @@ import json
 import os
 from inspect import currentframe
 from magpie.src.mworksheets import MWorksheets
+from magpie.src.musage import MUsage
+from magpie.src.mzdatetime import MZdatetime
+from hallelujah.jah import Jah
 from multiprocessing import Process
 import argparse
 from time import sleep
@@ -46,29 +49,39 @@ def Error(stack: list, error:str) -> str:
 
 
 class Hallelu:
-    def __init__(self, port: int, ip: str, identification: str,
+    def __init__(self, identification: str,
                  worksheetdir: str, halleludir: str):
-        self.processes = []
+        # Read archived worksheets.
         self.ws = MWorksheets(worksheetdir)
+        self.ws.expandcmds()
+        self.processes = []
         self.halleludir = halleludir
         self.stop = False
-        self.ip = ip
-        self.port = port
+        self.usage = MUsage()
         self.id = identification
-        self.init_socket(ip,port)
+        self.ip = self.getIPAddressForTheInternet()
+        self.port = 0
+        if self.id == "summit":
+            # The summit port number is static, read it from cfg.
+            with open(os.path.join(self.halleludir,"hosts.json"),"r") as f:
+                j = json.load(f)
+                self.port = j[self.usage.host]["port"]
+        self.init_socket()
+        self.jah_count = 0
+        self.usage_tick = 0
         fn = "hall_" + self.id + ".json"
         if self.id == "summit":
             # Delete any past hallelu files.
             self.removeHalleluFiles()
             with open(os.path.join(self.halleludir,fn), "w") as f:
-                json.dump(f,{"port": self.port, "ip": self.ip, "cmd": None})
+                json.dump({"port": self.port, "ip": self.ip, "cmd": None},f)
         else:
             # Add port number to the hallelu file.
             with open(os.path.join(self.halleludir,fn), "r") as f:
                 j = json.load(f)
             with open(os.path.join(self.halleludir,fn), "w") as f:
                 j["port"] = self.port
-                json.dump(f,j)
+                json.dump(j,f)
             self.createJah(j)
 
     @staticmethod
@@ -79,20 +92,22 @@ class Hallelu:
         s.close()
         return ret
 
-    def createJah(self, cmd: dict) -> None:
-        with open(os.path.join(self.halleludir,"jahs_"+self.id+".json"),"r") as f:
-        # TODO; create jah process.
-        # - create in hallelu dir a jah file with cmd
-        # - spawn jah
-        # - wait for jah to start up.
-        # TODO; how to create on other computers?
-        #       Summit Hallelu should know which host is least busy,
-        #       using keep-alives between the Hallelu.
-        #       Requests from children can go directly to the summit Hallelu
-        #       on another host.
-        #         Child --request host--> Summit
-        #         Child --exec command-->host
-        pass
+    def createJah(self, j: dict) -> None:
+        self.jah_count += 1
+        identification = str(self.jah_count)
+        fn = os.path.join(self.halleludir,"jah_"+identification+".json" )
+        j["port"] = 0
+        with open(fn,"w") as f:
+            json.dump(j,f)
+        p = Process(target=Jah.child_main,
+                    args=[identification, self.halleludir])
+        self.processes.append(p)
+        p.start()
+        # wait for child to start.
+        while not j["port"]:
+            with open(fn,"r") as f:
+                j = json.load(f)
+            sleep(0.5)
 
     def removeHalleluFiles(self) -> None:
         for fn in os.listdir(path=self.halleludir):
@@ -101,32 +116,37 @@ class Hallelu:
             if fn == "hosts.json":
                 # reset host usage.
                 with open(os.path.join(self.halleludir,"hosts.json"),"r") as f:
-                    j = josn.load(f)
+                    j = json.load(f)
                     for host in j:
-                        j[host] = {}
+                        j[host] = {"port": j[host]["port"], "ip": j[host]["ip"]}
+                x = {"port": 16085, "ip": self.getIPAddressForTheInternet()}
+                if host not in j:
+                    raise Exception("Missing "+host+" in hosts.json, please add "+str(x))
+                if j[host]["ip"] != x["ip"]:
+                    raise Exception(host+" in hosts.json, ip address has changed to "+x["ip"])
                 with open(os.path.join(self.halleludir,"hosts.json"),"w") as f:
-                    json.dumps(f,j)
-                conitnue
-            if not fn.startswith("hall_"):
-                continue
-            os.remove(os.path.join(self.halleludir,fn))
-        
-    def init_socket(self,ip: str, port: int):
+                    json.dump(j,f)
+            elif fn.startswith("hall_"):
+                os.remove(os.path.join(self.halleludir,fn))
+            elif fn.startswith("jah_"):
+                os.remove(os.path.join(self.halleludir,fn))
+
+    def init_socket(self) -> None:
         self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.s.settimeout(5)  # Blocks for 5 seconds when nothing to process.
+        self.s.settimeout(0)  # Blocks for 5 seconds when nothing to process.
         # '' is ENYADDR, 0 causes bind to select a random port.
         # IPv6 requires socket.bind((host, port, flowinfo, scope_id))
         self.s.bind((self.ip, self.port))
         if not self.port:
             # bind selected a random port, get it!
             self.port = self.s.getsockname()[1]
+        print(self.id+":"+str(self.port)+" Hallelu says hello " + str(self.ip))
 
     def playWorksheets(self) -> None:
-        for title in self.ws_titles:
-            i = self.ip
-            p = self.port
-            for cmd in self.ws.cmds(title):
-                i, p = self.nextcmd(i, p, cmd)
+        for wsn in self.ws.titles():
+            for cmd in self.ws.sheet(wsn):
+                self.nextCmd(cmd)
+                return  # TODO; remove to play all cmds.
 
     def getusage(self) -> None:
         if self.id != "summit":
@@ -135,11 +155,14 @@ class Hallelu:
             self.usage_tick -= 1
             return
         self.usage_tick = 60
-        # Contact other hosts, get usage.
+        # Contact other summits to get host usage.
         with open(os.path.join(self.halleludir,"hosts.json"),"r") as f:
             j = json.load(f)
-            for host in j:
-                # TODO; send usage request to hall.
+            txt = json.dumps({"_usage_": True})
+            msg = txt.encode('utf-8')
+            for host in j.keys():
+                addr = (j[host]["ip"], j[host]["port"])
+                self.s.sendto(msg, addr)
 
     def poll(self) -> None:
         if self.id == "summit":
@@ -147,8 +170,10 @@ class Hallelu:
         while not self.stop:
             self.getusage()
             j = self.receiveCmd()
-            if not self.localcmd(j):
-                self.nextcmd(j)
+            if j:
+                self.nextCmd(j)
+            else:
+                sleep(0.1)
         for p in self.processes:
             # Wait for child to terminate
             p.join()
@@ -157,70 +182,97 @@ class Hallelu:
         ready = select.select([self.s], [], [], 1)
         if not ready[0]:
             return None
-        (data, ip) = self.s.recvfrom(4096)
+        (data, ip_port) = self.s.recvfrom(4096)
         try:
             j = json.loads(data.decode('utf-8'))
         except json.JSONDecodeError as err:
-            print("Failed to parse cmds from " + str(ip))
+            print("Failed to parse cmds from " + str(ip_port))
             print(err)
             return None
         except Exception as e:
-            print("Failed to parse cmds " + str(e) + " from " + str(ip))
+            print("Failed to parse cmds " + str(e) + " from " + str(ip_port))
             return None
+        errors = self.ws.verifycmd(j)
+        if errors:
+            print("Failed to parse cmds " + errors + " from " + str(ip_port))
+            return None
+        j["__remote_address__"] = ip_port
         return j
 
-    def localCmd(self, j: dict) -> bool:
-        if self.ws.cmdTitle(j):
-            # Follow-on commands are those with titles.
-            return False
-        msg = json.dumps(j).encode('utf-8')
-        with open(os.path.join(self.halleludir,"jahs_"+self.id+".json"),"r") as f:
-            j = json.load(f)
-            for jah in j:
-                sock.sendto(msg, (j["ip"], j["port"]))
-        return True
+    def halleluCmd(self, title: str, cmd: dict) -> None:
+        if title == "_usage_":
+            # Request for host usage.
+            msg = json.dumps({
+                    "_usage_response_": {
+                            "host": self.usage.host,
+                            "cpuUsage": self.usage.cpuUsage(),
+                            "diskUsage": self.usage.diskUsage(self.halleludir),
+                            "memoryUsage": self.usage.memoryUsage(),
+                            "timestamp": MZdatetime().strftime()
+                            }
+                    }).encode('utf-8')
+            self.s.sendto(msg, cmd["__remote_address__"])
+        elif title == "_usage_response_":
+            # Update host.json with host usage response.
+            with open(os.path.join(self.halleludir,"hosts.json"),"r") as f:
+                h = json.load(f)
+                cmd = cmd["_usage_response_"]
+                for k in cmd.keys():
+                    h[cmd["host"]][k] = cmd[k]
+            with open(os.path.join(self.halleludir,"hosts.json"),"w") as f:
+                json.dump(h,f)
+        else:
+            raise Exception("Unexpected message " + str(cmd))
 
-    def nextcmd(self, cmd: dict) -> (str, int):
-        if cmd == None:
-            return
-        cmdtitle = self.ws.cmdTitle(cmd)
+    # Create a Hallelu to manage the Jahs that run this new command.
+    def newHalleluCmd(self, cmd: dict) -> None:
+        cmdtitle = self.ws.cmdName(cmd) + "_" + self.ws.cmdFeed(cmd)[0]
         fn = "hall_" + cmdtitle + ".json"
-        j = {"port": 0, "ip": self.ip, "cmd": cmd}
         if os.path.exists(os.path.join(self.halleludir,fn)):
-            with open(os.path.join(self.halleludir,fn),"r") as f:
-                j = json.load(f)
-            return (j["ip"], j["port"])
+            raise Exception("Dulicate cmd " + fn)
+        j = {"port": 0, "ip": self.ip, "cmdtitle": cmdtitle, "cmd": cmd}
         with open(os.path.join(self.halleludir,fn),"w") as f:
-            json.dump(f,j)
-        p = Process(target=self.main,
-                    args=(self.worksheetdir, cmdtitle, "-i "+self.ip))
-        self.processes.add(p)
+            json.dump(j,f)
+        p = Process(target=self.child_main,
+                    args=[self.ip, cmdtitle, self.ws.dir, self.halleludir])
+        self.processes.append(p)
         p.start()
+        # wait for child to start.
         while not j["port"]:
             with open(os.path.join(self.halleludir,fn),"r") as f:
                 j = json.load(f)
             sleep(0.5)
-        return (j["ip"], j["port"])
+
+    def nextCmd(self, cmd: dict) -> None:
+        title = self.ws.cmdName(cmd)
+        if title.startswith("_"):
+            self.halleluCmd(title,cmd)
+        else:
+            if self.id == "summit":
+                self.newHalleluCmd(cmd)
+            else:
+                raise Exception("Unexpecting cmd " + str(cmd))
+
+    @staticmethod
+    def child_main(ip: str, identification: str,
+                 worksheetdir: str, halleludir: str):
+        h = Hallelu(identification=identification,
+                worksheetdir=worksheetdir,
+                halleludir=halleludir)
+        h.poll()
 
     @staticmethod
     def main():
         parser = argparse.ArgumentParser(description="Hallelu database controller")
         parser.add_argument('worksheetdir', help="Path to worksheet directory")
         parser.add_argument('halleludir', help="Path to hallelu directory")
-        parser.add_argument('id', help="Unique name for this Hallelu is the feed name for the cmd. The summit Hallelu has a name of summit", nargs='?', const="summit", type=str)
-        parser.add_argument('-p', '--port', help="Override automatic port allocation, use this port instead")
-        parser.add_argument('-i', '--ip', help="Limit comms to a particular interface by specifying the IP address for that interface, otherwise packets on all interfaces are processed.")
+        parser.add_argument('--id', help="Unique name for this Hallelu is the feed name for the cmd. The summit Hallelu has a name of summit")
         args = parser.parse_args()
-        if args.ip == None:
-            # IPv4: '' is INADDR_ANY i.e. all interfaces.
-            args.ip = ''
-        if args.port == None:
-            # port 0 means select any port, random selection.
-            args.port = 0
-        print("Hallelu " + str(args.ip) + ":" + str(args.port))
-        h = Hallelu(port=args.port, ip=args.ip, identification=args.id, 
+        if args.id is None:
+            args.id = "summit"
+        h = Hallelu(identification=args.id, 
                 worksheetdir=args.worksheetdir,
-                halleudir=args.halleludir)
+                halleludir=args.halleludir)
         h.poll()
 
 

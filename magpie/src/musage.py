@@ -20,6 +20,8 @@
 # by comparing usage at least one second in the past.
 import psutil
 from time import sleep
+import socket
+
 
 class MUsage():
     
@@ -46,6 +48,9 @@ class MUsage():
         self.oneSecondDelta = dt + di
         if not self.oneSecondDelta:
             raise Exception("no memory inc during initialization")
+        self.host = socket.gethostname()
+        if not self.host:
+            raise Exception("No hostname")
 
     def memoryUsage(self) -> int:
         return int(psutil.virtual_memory().percent)
@@ -97,3 +102,18 @@ class MUsage():
     def diskFree(self, dir: str) -> int:
         u = psutil.disk_usage(dir)
         return int(u.free * 100 / u.total)
+    
+    @staticmethod
+    def main():
+        u = MUsage()
+        i = 10
+        while i:
+            i -= 1
+            sleep(1)
+            print(u.host+" cpuUsage:" + str(u.cpuUsage()))
+            print(u.host+" diskUsage:" + str(u.diskUsage("/")))
+            print(u.host+" memoryUsage:" + str(u.memoryUsage()))
+
+
+if __name__ == "__main__":
+    MUsage.main()

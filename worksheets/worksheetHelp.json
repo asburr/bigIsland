@@ -276,5 +276,48 @@
             "type": "int", "default": 86400,
             "desc": "This is the period in second in between the email alerts."
         }
+    }, "_usage_": {
+        "type": "bool",
+        "desc": "Internal request for host usage from a summit Hallelu."
+    }, "_usage_response_": {
+        "type": "composite",
+        "desc": "Host usage.",
+        "host": {
+            "type": "str",
+            "desc": "Name of the host"
+        }, "cpuUsage": {
+            "type": "int",
+            "desc": "Percentage (0-100) usage"
+        }, "diskUsage": {
+            "type": "int",
+            "desc": "Percentage (0-100) usage"
+        }, "memoryUsage": {
+            "type": "int",
+            "desc": "Percentage (0-100) usage"
+        }, "timestamp": {
+            "type": "str",
+            "desc": "msdatetime.strftime() when usage was take"
+        }
+    }, "_sample_": {
+        "type": "composite",
+        "desc": "Request a N sample documents",
+        "N": {
+            "type": "int", "default": 100,
+            "desc": "Numer of documents"
+        },
+        "feed": {
+            "type": "feedRef", "default": null,
+            "desc": "Name a feed to get samples from, otherwise samples are taken from all feeds"
+        }
+    }, "_sample_response_": {
+        "type": "listComposites",
+        "desc": "Samples",
+        "feed": {
+            "type": "str",
+            "desc": "Name of the feed where the sample came from"
+        }, "sample": {
+            "type": "any",
+            "desc": "the sample"
+        }
     }
 }

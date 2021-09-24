@@ -182,6 +182,10 @@ class MWorksheets:
         if t in self.expand_handlers:
             return self.expand_handlers[t](cmd, schema)
 
+    def expandcmd(self, cmd: any, cmdname: str) -> None:
+        self.expandingcmd = cmd
+        self._expandcmd(cmd, self.schema[cmdname])
+        
     def expandcmds(self) -> None:
         for wsn in self.ws.keys():
             for self.expandingcmd in self.ws[wsn]:
@@ -669,8 +673,9 @@ print(desc)
         inputs = []
         self._inputcmd(cmd[cmdname], self.schema[cmdname], inputs)
         return inputs
-            
-    def cmdName(self, cmd: any) -> str:
+
+    @staticmethod
+    def cmdName(cmd: any) -> str:
         for k in cmd.keys():
             if k not in ["__state__"]:
                 return k
@@ -840,16 +845,19 @@ print(desc)
                 return self._Error(stack, "Unknown type " + t)
         return self.verify_handlers[t](stack, cmd, schema)
 
-    def verifycmds(self, j: any) -> str:
+    def verifycmd(self, cmd: dict) -> str:
+        name = list(cmd.keys())[0]
+        if name not in self.schema:
+            return self._Error([], "Unexpected cmd name " + name)
+        error = self._verifycmd([name], cmd[name], self.schema[name])
+        if error:
+            return "Error in cmd " + name + " " + error
+
+    def verifycmds(self, j: list) -> str:
         for cmd in j:
-            name = list(cmd.keys())[0]
-            if name in ["__state__"]:
-                continue
-            if name not in self.schema:
-                return self._Error([], "Unexpected cmd name " + name)
-            error = self._verifycmd([name], cmd[name], self.schema[name])
+            error = self.verifycmd(cmd)
             if error:
-                return "Error in cmd " + name + " " + error
+                return error
 
     def blocked(self) -> list:
         return [cmd for feed,cmd in self.feeds.items() if cmd["__state__"] == "blocked"]
