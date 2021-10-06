@@ -25,7 +25,7 @@ class MWorkSheetException(Exception):
 
 
 class MWorksheets:
-    def __init__(self, dir: str):
+        def __init__(self, dir: str):
         self.verify_handlers = {
             "composite": self._verifyComposite,
             "listComposites": self._verifyListComposite,
@@ -303,6 +303,7 @@ class MWorksheets:
                 params[p] = "samplebutton"
             else:
                 params[p] += ",samplebutton"
+            selected[p] = cmd
         if t in ["feed", "feedRef", "path", "field", "str", "email", "fmt", "any", "regex"]:
             if cmd is not None:
                 params[parent] = "str"
