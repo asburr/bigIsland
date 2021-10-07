@@ -65,69 +65,78 @@ class MUDP:
         self.i = 0
         self._initBuffer()
         self.recvMsgs = {}
+        self.contentHdrLen = len("B11")       # B<contentId>
+        self.chunkOHdrLen = len("o1111")      # o<chunkLen>
+        self.chunkHdrLen = len("b001111")     # b<chunkId><chunkLen>
+        self.sensibleSpaceForContent = self.contentHdrLen + (self.chunkHdrLen * 2)
 
     def _initBuffer(self):
-        self.contentBuffered = False
         self.buffer = "%02x" % self.sndMsgId
+        self.i = 2
         self.sndMsgId = self.nextId( self.sndMsgId )
+        self.firstContent = True
 
+    def _append(self, s: str):
+        self.buffer += s
+        self.i += len(s)
+        # print("_append " + self.buffer + " " + str(self.i))
+        if self.i > self.maxPayload:
+            raise Exception("Beyond the pale")
+
+    def _room(self) -> int:
+        return self.maxPayload - self.i
+
+    def _send(self, eom: bool=False):
+        if self.i == 2:  # Nothing but msgId in buffer!
+            return
+        if eom or self._room() < self.sensibleSpaceForContent:
+            # print("sent "+str(len(self.buffer))+":"+self.buffer)
+            self.s.sendto(self.buffer.encode('utf-8'), self.addr)
+            self._initBuffer()
+        
     def send(self, content: str, eom: bool) -> None:
-        if self.firstContent:
+        if self.firstContent:  # First content, use O and B.
             self.firstContent = False
             if eom:
-                self.buffer += "O"
+                self._append("O")
             else:
-                self.buffer += ("B%02x" % self.contentId)
-                self.contentId = self.nextId( self.contentId )
-        else:
+                self._append("B%02x" % self.contentId)
+                self.contentId += self.nextId( self.contentId )
+        else:  # Next content, use F or C.
             if eom:
-                self.buffer += ("F%02x" % self.contentId)
+                self._append("F%02x" % self.contentId)
             else:
-                self.buffer += ("C%02x" % self.contentId)
+                self._append("C%02x" % self.contentId)
             self.contentId = self.nextId( self.contentId )
-        bufferLen = len(self.buffer)
-        chunkHdrLen = 5
         contentLen = len(content)
-        if ( bufferLen + chunkHdrLen + contentLen ) < self.maxPayload:
-            self.buffer += "o" + ("%04x"%len(content)) + content
-            if eom:
-                self.s.sendto(self.buffer.encode('utf-8'), self.addr)
-                self._initBuffer()
+        if self._room() >= self.chunkOHdrLen + contentLen:
+            self._append("o" + ("%04x"%contentLen) + content)
+            self._send(eom)
             return
-        chunkHdrLen = 7
         firstChunkId = True
         contentIdx = 0
-        while contentIdx < contentLen:
-            remainingContentLen = contentLen - contentIdx
+        remainingContentLen = contentLen - contentIdx
+        while remainingContentLen:
+            r = self._room() - self.chunkHdrLen
             if firstChunkId:
                 firstChunkId = False
-                self.buffer += "b"
+                self._append("b")
             else:
-                if remainingContentLen > roomInBuffer:
-                    self.buffer += "c"
+                if remainingContentLen > r:
+                    self._append("c")
                 else:
-                    self.buffer += "f"
-            if remainingContentLen > roomInBuffer:
-                nxtContentIdx = contentIdx + roomInBuffer
+                    self._append("f")
+            if remainingContentLen > r:
+                nxtContentIdx = contentIdx + r
             else:
                 nxtContentIdx = contentIdx + remainingContentLen
             chunk = content[contentIdx:nxtContentIdx]
             contentIdx = nxtContentIdx
-            self.buffer += ("%02x" % self.chunkId) + ("%04x"%len(chunk)) + chunk
-            self.contentBuffered = True
+            self._append(("%02x" % self.chunkId) + ("%04x"%len(chunk)) + chunk)
             self.chunkId = self.nextId( self.chunkId )
-            bufferLen = len(self.buffer)
-            roomInBuffer = self.maxPayload - ( bufferLen + chunkHdrLen )
-            if roomInBuffer < chunkHdrLen:
-                self.s.sendto(self.buffer.encode('utf-8'), self.addr)
-                self._initBuffer()
-                bufferLen = len(self.buffer)
-                roomInBuffer = self.maxPayload - ( bufferLen + chunkHdrLen )
-        if eom:
-            if self.contentBuffered:
-                self.s.sendto(self.buffer.encode('utf-8'), self.addr)
-                self._initBuffer()
-            self.firstContent = True
+            remainingContentLen = contentLen - contentIdx
+            self._send(eom=(remainingContentLen>0))
+        self._send(eom)
 
     def recv(self) -> str:
         while True:
@@ -138,8 +147,6 @@ class MUDP:
                 txt = ""
                 (data, ip_port) = self.s.recvfrom( self.maxPayload )
                 txt = data.decode('utf-8')
-                print(txt)
-                print(len(txt))
                 for txt in self.decode(txt):
                     yield (txt, ip_port)
             except json.JSONDecodeError as err:
@@ -151,6 +158,7 @@ class MUDP:
             except Exception as e:
                 traceback.print_exc()
                 print("Failed to parse cmds " + str(e) + " from " + str(ip_port))
+                print(txt)
 
     def recvJson(self) -> dict:
         for txt, ip_port in self.recv():
@@ -160,10 +168,13 @@ class MUDP:
             yield j
 
     def _decodeHex(self, size: int) -> int:
-        nxtI = self.i + size
-        ret = int(self.txt[self.i:nxtI],16)
-        self.i = nxtI
-        return ret
+        try:
+            nxtI = self.i + size
+            ret = int(self.txt[self.i:nxtI],16)
+            self.i = nxtI
+            return ret
+        except Exception as e:
+            raise Exception(str(e)+"; at "+str(self.i)+":"+str(nxtI)+"="+self.txt[self.i:nxtI]+" l="+str(self.l)+"\nin "+self.txt)
 
     def _decodeStr(self, size: int) -> str:
         nxtI = self.i + size
@@ -195,7 +206,7 @@ class MUDP:
                 if label in ["b", "c", "f"]:
                     chunkId = self._decodeHex(2)
                     if self.chunkId != chunkId:
-                        raise Exception("Bad chunkId " + str(chunkId))
+                        raise Exception("Bad chunkId " + str(chunkId) + " want " + str(self.chunkId))
                     self.chunkId = self.nextId( self.chunkId )
                 chunkLen = self._decodeHex(4)
                 self.content += self._decodeStr(chunkLen)
@@ -224,11 +235,10 @@ class MUDP:
         server = MUDP(clientAddr,serverS, maxPayload=100)
         print(str(serverS.getsockname())+" > "+str(clientAddr))
 
-        s = "abcdefghijklmnopqrstuvwxyz"
-        client.send(s, eom=True)
-        client.send("__samples__", eom=False)
-        client.send("1234", eom=False)
-        client.send("5678", eom=True)
+        l = [("abcdefghijklmnopqrstuvwxyz", True), ("__samples", False), ("1234", False), ("5678", True)]
+        for (txt, eom) in l:
+            print("sending " + txt + " " + str(eom))
+            client.send(txt, eom=eom)
         for txt in server.recv():
             print(txt)
         for txt in server.recv():
