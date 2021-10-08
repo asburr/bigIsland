@@ -10,36 +10,33 @@
 # 
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
 
-# This is a little wrapper on top of UDP. A message is started between
-# two UDP ports, and one or more text content can be sent. Small contents
-# are packed into the same UDP payload, the payload is sent when full or at
-# the end of the mesage. Large contents is packed across many UDP payloads,
-# and in this case the content is yielded at the remote end before all of
-# the message is sent.
-# UDP loss is detected. Content is lost when one of its chunks is lost.
-# Remote users are notified of the loss of content, and can decide to continue
-# to receive the remaining content, or stop receiving the remaining content.
+# A UDP wrapper, designed for database request and response.
+# UDP loss is detected.  Remote user is notified of the loss, and can decide
+# to continue to receive the remaining content, or stop receiving the
+# remaining content.
 # 
-# UDP payloads start with a (Msg Id), two hex digits, it is a one up number
-# that increments for each new message.
-# After (Msg Id), is the content indicator and content id. Content Id is two
-# hex digits, it is a one up number that increments for each new content in
-# the message.
-#  O<single content>
-#  B(Content Id)<first content>
-#  C(Content Id)<next content>
-#  F(Content Id)<last content>
-# Content is divided into chunks when it is too large to fit into the
-# remaining space in the UDP payload.
-#  o<no chunks, single chunk>
-#  b(Chunk Id)<first chunk>
-#  c(Chunk Id)<next chunk>
-#  f(Chunk Id)<last chunk>
-# The application program interface is as follows,
-#  m.send("hello", eom=True)
-#  m.send("hello", eom=False)
-#  m.send("world", eom=True)
-
+# UDP loss is detect by gaps in sequence ids:
+# 1. Message id is two hex digits.
+# 2. Content id is two hex digits.
+# 3. Chunk id is a two hex digit.
+# The messages formats:
+#  <message id>O<request id><single content>
+#  <message id>B<request id>o<content id><first content>
+#  <message id>Co<content id><next content>
+#  <message id>Fo<content id><last content>
+# When content is too large it is divided into chunks:
+#  <message id>O<request id>b<chunkid><first chunk>
+#  <message id>c<chunkid><next chunk>
+#  <message id>f<chunkid><last chunk>
+# The Client API:
+#  c = MUDP(serverAddr,clientSocket, maxPayload=128)
+#  c.send("hello", requestId=1, eom=False)
+#  c.send("hello", eom=True)
+#  c.send("world", eom=True)
+# The server API:
+#  s = MUDP(None,serverSocket, maxPayload=128)
+#  for content in s.recv():
+#    print(content)
 import socket
 import select
 import json
@@ -51,6 +48,10 @@ class MUDP:
     def nextId(i: int) -> int:
         return (i + 1) & 0xff
 
+    @staticmethod
+    def prevId(i: int) -> int:
+        return (i - 1) & 0xff
+
     def __init__(self, addr: any, socket: any,
                  maxPayload: int=65527):
         self.maxPayload = maxPayload
@@ -59,27 +60,27 @@ class MUDP:
         self.contentId = 0
         self.firstContent = True
         self.chunkId = 0
+        self.requestId = 0
         self.sndMsgId = 0
         self.rcvMsgId = 0
-        self.buffer = None
-        self.i = 0
-        self._initBuffer()
-        self.recvMsgs = {}
-        self.contentHdrLen = len("B11")       # B<contentId>
-        self.chunkOHdrLen = len("o1111")      # o<chunkLen>
-        self.chunkHdrLen = len("b001111")     # b<chunkId><chunkLen>
-        self.sensibleSpaceForContent = self.contentHdrLen + (self.chunkHdrLen * 2)
-
-    def _initBuffer(self):
         self.buffer = "%02x" % self.sndMsgId
         self.i = 2
-        self.sndMsgId = self.nextId( self.sndMsgId )
-        self.firstContent = True
+        self.recvMsgs = {}
+        self.contentHdrLen = len("B00")         # B<requestid>
+        self.chunkOHdrLen = len("o001111")    # o<contentId><chunkLen>
+        self.chunkHdrLen = len("b00112222")   # b<contentId><chunkId><chunkLen>
+        self.sensibleSpaceForContent = self.contentHdrLen + (self.chunkHdrLen * 2)
+        if maxPayload > 65527:
+            raise Exception("maxPayload above UDP maximum "+str(maxPayload))
+        if maxPayload < self.sensibleSpaceForContent:
+            raise Exception("maxPayload too small at "+str(maxPayload)+" smallest="+str(self.sensibleSpaceForContent))
+        self.skipBad = True
+        self.skipMsgId = -1
 
     def _append(self, s: str):
         self.buffer += s
         self.i += len(s)
-        # print("_append " + self.buffer + " " + str(self.i))
+        # print("_append " + self.buffer + " " + str(self.i) +" " +s)
         if self.i > self.maxPayload:
             raise Exception("Beyond the pale")
 
@@ -92,25 +93,31 @@ class MUDP:
         if eom or self._room() < self.sensibleSpaceForContent:
             # print("sent "+str(len(self.buffer))+":"+self.buffer)
             self.s.sendto(self.buffer.encode('utf-8'), self.addr)
-            self._initBuffer()
+            self.sndMsgId = self.nextId( self.sndMsgId )
+            self.buffer = "%02x" % self.sndMsgId
+            self.i = 2
         
-    def send(self, content: str, eom: bool) -> None:
+    def send(self, content: str, requestid:int, eom: bool) -> None:
         if self.firstContent:  # First content, use O and B.
-            self.firstContent = False
             if eom:
-                self._append("O")
+                self.firstContent = True
+                self._append("O%02x"%requestid)
             else:
-                self._append("B%02x" % self.contentId)
-                self.contentId += self.nextId( self.contentId )
+                self.firstContent = False
+                self._append("B%02x"%requestid)
         else:  # Next content, use F or C.
             if eom:
-                self._append("F%02x" % self.contentId)
+                self._append("F")
+                self.firstContent = True
             else:
-                self._append("C%02x" % self.contentId)
-            self.contentId = self.nextId( self.contentId )
+                self.firstContent = False
+                self._append("C")
+        self.contentId = self.nextId( self.contentId )
         contentLen = len(content)
-        if self._room() >= self.chunkOHdrLen + contentLen:
-            self._append("o" + ("%04x"%contentLen) + content)
+        if self._room() >= self.chunkHdrLen + contentLen:
+            self._append("o" + ("%02x%02x%04x"%(self.contentId, self.chunkId, contentLen) ) )
+            self._append(content)
+            self.chunkId = self.nextId( self.chunkId )
             self._send(eom)
             return
         firstChunkId = True
@@ -132,11 +139,12 @@ class MUDP:
                 nxtContentIdx = contentIdx + remainingContentLen
             chunk = content[contentIdx:nxtContentIdx]
             contentIdx = nxtContentIdx
-            self._append(("%02x" % self.chunkId) + ("%04x"%len(chunk)) + chunk)
+            self._append("%02x%02x%04x" % (self.contentId, self.chunkId, len(chunk)))
+            self._append(chunk)
             self.chunkId = self.nextId( self.chunkId )
             remainingContentLen = contentLen - contentIdx
             self._send(eom=(remainingContentLen>0))
-        self._send(eom)
+        self._send(eom=eom)
 
     def recv(self) -> str:
         while True:
@@ -147,8 +155,14 @@ class MUDP:
                 txt = ""
                 (data, ip_port) = self.s.recvfrom( self.maxPayload )
                 txt = data.decode('utf-8')
-                for txt in self.decode(txt):
-                    yield (txt, ip_port)
+                if self.skip > 0:
+                    self.skip -= 1
+                    if self.skip == 0:
+                        # print("Skipping " + txt)
+                        continue
+                # print("recv " +txt)
+                for msgid, txt in self.decode(txt):
+                    yield (msgid, txt, ip_port)
             except json.JSONDecodeError as err:
                 traceback.print_exc()
                 print((self.ip,self.port))
@@ -178,6 +192,8 @@ class MUDP:
 
     def _decodeStr(self, size: int) -> str:
         nxtI = self.i + size
+        if nxtI > self.l:
+            print("Truncated message. Check MTU settings on all servers!")
         ret = self.txt[self.i:nxtI]
         self.i = nxtI
         return ret
@@ -190,28 +206,61 @@ class MUDP:
         self.i = 0
         self.l = len(txt)
         rcvMsgId = self._decodeHex(2)
+        if self.skipBad:
+            if self.skipMsgId != -1:
+                self.skipMsgId = -1
+                # Reset ids, but only for a first packet i.e. O or B.
+                self.rcvMsgId = rcvMsgId
+                label = self._decodeStr(1)
+                if label not in ["O", "B"]:
+                    self.skipMsgId = rcvMsgId
+                    return
+                self.requestId = self._decodeHex(2)
+                label = self._decodeStr(1)
+                if label not in ["o", "b"]:
+                    self.skipMsgId = rcvMsgId
+                    return
+                self.contentId = self.prevId(self._decodeHex(2))
+                self.chunkId = self._decodeHex(2)
+                self.i = 2
+                
+                # print("resetting ids to: "+str(self.rcvMsgId)+ "," + str(self.contentId) + "," + str(self.chunkId))
         if self.rcvMsgId != rcvMsgId:
-            raise Exception("Bad msg id " + str(rcvMsgId) + " "+str(self.rcvMsgId))
+            if self.skipBad:
+                # print("Starting skipping Bad msg id " + str(rcvMsgId) + " "+str(self.rcvMsgId))
+                self.skipMsgId = rcvMsgId
+                return
+            else:
+                raise Exception("Bad msg id " + str(rcvMsgId) + " "+str(self.rcvMsgId))
         self.rcvMsgId = self.nextId( self.rcvMsgId )
         while self._decodeRemaining() > 0:
             label = self._decodeStr(1)
             if label in ["O", "B", "C", "F"]:
+                if label in ["O", "B"]:
+                    self.requestId = self._decodeHex(2)
                 self.content = ""
-                if label in ["B", "C", "F"]:
-                    contentId = self._decodeHex(2)
-                    if self.contentId != contentId:
-                        raise Exception("Bad contentId " + str(contentId))
-                    self.contentId = self.nextId( self.contentId )
+                self.contentId = self.nextId( self.contentId )
             elif label in ["o", "b", "c", "f"]:
-                if label in ["b", "c", "f"]:
-                    chunkId = self._decodeHex(2)
-                    if self.chunkId != chunkId:
-                        raise Exception("Bad chunkId " + str(chunkId) + " want " + str(self.chunkId))
-                    self.chunkId = self.nextId( self.chunkId )
+                contentId = self._decodeHex(2)
+                if self.contentId != contentId:
+                    if self.skipBad:
+                        # print("Starting skipping Bad contentId got " + str(contentId)+" expect "+str(self.contentId))
+                        self.skipMsgId = rcvMsgId
+                        return
+                    # print(self.txt + " " + str(self.i))
+                    raise Exception("Bad contentId got " + str(contentId)+" expect "+str(self.contentId))
+                chunkId = self._decodeHex(2)
+                if self.chunkId != chunkId:
+                    if self.skipBad:
+                        # print("Starting skipping Bad chunkId " + str(chunkId) + " want " + str(self.chunkId))
+                        self.skipMsgId = rcvMsgId
+                        return
+                    raise Exception("Bad chunkId " + str(chunkId) + " want " + str(self.chunkId))
+                self.chunkId = self.nextId( self.chunkId )
                 chunkLen = self._decodeHex(4)
                 self.content += self._decodeStr(chunkLen)
                 if label in ["o", "f"]:
-                    yield self.content
+                    yield (self.requestId, self.content)
                     self.content = ""
             else:
                 raise Exception("Bad label " + label)
@@ -230,20 +279,25 @@ class MUDP:
         serverS.bind((ip, 0))
         serverAddr = (ip,serverS.getsockname()[1])
 
-        client = MUDP(serverAddr,clientS, maxPayload=100)
+        client = MUDP(serverAddr,clientS, maxPayload=30)
         print(str(clientS.getsockname())+" > "+str(serverAddr))
-        server = MUDP(clientAddr,serverS, maxPayload=100)
+        server = MUDP(None,serverS, maxPayload=30)
         print(str(serverS.getsockname())+" > "+str(clientAddr))
+        server.skip = 0
 
-        l = [("abcdefghijklmnopqrstuvwxyz", True), ("__samples", False), ("1234", False), ("5678", True)]
-        for (txt, eom) in l:
-            print("sending " + txt + " " + str(eom))
-            client.send(txt, eom=eom)
-        for txt in server.recv():
-            print(txt)
-        for txt in server.recv():
-            print(txt)
-        
+        l = [("abcdefghijklmnopqrstuvwxyz", True), ("__samples", False), ("12345678901234567", False), ("123456789012345678", False), ("1234567890123456", True)]
+        requestid = 0
+        for txt, eom in l:
+            # print("sending " + txt + " " + str(eom))
+            client.send(txt, requestid=requestid, eom=eom)
+            if eom:
+                requestid += 1
+        for requestid, txt, ip_port in server.recv():
+            print("requestid("+str(requestid)+") \""+txt+"\" from"+str(ip_port))
+        for requestid, txt, ip_por in server.recv():
+            print("requestid("+str(requestid)+") \""+txt+"\" from"+str(ip_port))
+        print("Msg ids, send %d, recv %d" % (client.sndMsgId, server.rcvMsgId))
+
         
 if __name__ == "__main__":
     MUDP.main()
