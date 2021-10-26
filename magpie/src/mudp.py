@@ -57,7 +57,7 @@ class MUDPDecodeMsg():
         self.i = 0
         self.l = 0
         self.txt = None
-        self.skipContentId = -1
+        self.skippingContent = False
         self.skipBad = True
         self.eom = False
 
@@ -66,7 +66,7 @@ class MUDPDecodeMsg():
         s+=" reqId="+str(self.requestId)
         s+=" cntId="+str(self.contentId)
         s+=" cnkId="+str(self.chunkId)
-        if self.skipContentId != -1:
+        if self.skippingContent:
             s+=" Skipping content"
         return s
 
@@ -82,7 +82,8 @@ class MUDPDecodeMsg():
     def _decodeStr(self, size: int) -> str:
         nxtI = self.i + size
         if nxtI > self.l:
-            print("Truncated message. Check MTU settings on servers!")
+            print("Check MTU "+self.txt)
+            raise Exception("Truncated message. Check MTU settings on servers!")
         ret = self.txt[self.i:nxtI]
         self.i = nxtI
         return ret
@@ -96,7 +97,7 @@ class MUDPDecodeMsg():
         self.i = 4
         self.l = len(txt)
         if self.skipBad:
-            if self.skipContentId != -1:
+            if self.skippingContent:
                 # Reset ids, but only for a first packet i.e. O or B.
                 label = self._decodeStr(1)
                 if label not in ["O", "B"]:
@@ -107,8 +108,8 @@ class MUDPDecodeMsg():
                     return
                 self.chunkId = self._decodeHex(2)
                 self.i = 4
-                self.skipContentId = -1
-                print("resetting ids to: " + str(self.contentId) + "," + str(self.chunkId))
+                self.skippingContent = False
+                print("Was skipping content, restarting content at: " + str(self.contentId) + "," + str(self.chunkId))
         while self._decodeRemaining() > 0:
             label = self._decodeStr(1)
             if label in ["O", "B", "C", "F"]:
@@ -118,21 +119,35 @@ class MUDPDecodeMsg():
                 if self.contentId != contentId:
                     if self.skipBad:
                         print("Starting skipping Bad contentId got " + str(contentId)+" expect "+str(self.contentId))
-                        self.skipContentId = contentId
+                        self.skippingContent = True
                         return
                     # print(self.txt + " " + str(self.i))
                     raise Exception("Bad contentId got " + str(contentId)+" expect "+str(self.contentId))
                 if label in ["O", "F"]:
                     self.eom = True
-                    self.contentId = 0
-                else:
-                    self.contentId = ( self.contentId + 1 ) & 0xff
             elif label in ["o", "b", "c", "f"]:
+                if label in ["c", "f"]:
+                    if len(self.content) == 0:
+                        # Missing prior chunk.
+                        self.skippingContent = True
+                        return
+                if label == "f":
+                    contentId = self._decodeHex(2)
+                    if self.contentId != contentId:
+                        if self.skipBad:
+                            print("Dropping content, Bad contentId in last chunk got " + str(contentId)+" expect "+str(self.contentId))
+                            self.skippingContent = True
+                            return
+                        # print(self.txt + " " + str(self.i))
+                        raise Exception("Bad contentId in last chunk, got " + str(contentId)+" expect "+str(self.contentId))
+                    self.contentId = ( self.contentId + 1 ) & 0xff
+                elif label == "o":
+                    self.contentId = ( self.contentId + 1 ) & 0xff
                 chunkId = self._decodeHex(2)
                 if self.chunkId != chunkId:
                     if self.skipBad:
                         print("Starting skipping Bad chunkId " + str(chunkId) + " want " + str(self.chunkId))
-                        self.skipContentId = contentId
+                        self.skippingContent = True
                         return
                     raise Exception("Bad chunkId " + str(chunkId) + " want " + str(self.chunkId))
                 self.chunkId = ( self.chunkId + 1 ) & 0xff
@@ -184,7 +199,7 @@ class MUDPDecodeMsgs():
 # different nodes are stored against the request id. Server mode were
 # responses are store against the node address and request id.
 class MUDPReader(threading.Thread):
-    def __init__(self, socket: any, maxPayload: int, client: bool):
+    def __init__(self, socket: any, maxPayload: int, client: bool, skip: int):
         threading.Thread.__init__(self)
         self.s = socket
         self.stop = False
@@ -199,6 +214,8 @@ class MUDPReader(threading.Thread):
             self.contentEOM = None
         self.maxPayload = maxPayload
         self.decodeMsgs = MUDPDecodeMsgs()
+        self.skip = skip
+        self.packetCount = 0
 
     def _decodeRequestId(self, txt: str) -> int:
         try:
@@ -263,6 +280,12 @@ class MUDPReader(threading.Thread):
                 (data, ip_port) = ret
                 # print("\nRecv "+str(data)+" from "+str(ip_port)+"\n")
                 txt = data.decode('utf-8')
+                if self.skip > 0:
+                    self.skip -= 1
+                    if self.skip == 0:
+                        print("MUDPReader, causing problems; skipping " + txt)
+                        continue
+                self.packetCount += 1
                 reqId = self._decodeRequestId(txt)
                 if reqId == -1:
                     self.publish()
@@ -293,9 +316,10 @@ class MUDPReader(threading.Thread):
 
 class MUDPBuildMsg():
     # <Label><content id><label><chunk id><chunk len><content>
+    # <label><content id><chunk id><chunk len><content>
     ContentHdrLen = len("B11b223333".encode('utf-8'))
     sensibleSpaceForContent = ContentHdrLen + (ContentHdrLen * 2)
-    ChunkHdrLen = len("b223333".encode('utf-8'))
+    ChunkHdrLen = len("f11223333".encode('utf-8'))
 
     requestId: int = int(random.random() * 0xffff)
     @staticmethod
@@ -395,7 +419,7 @@ class MUDPBuildMsg():
                 if remainingContentLen > r:
                     self._appendStr("c")
                 else:
-                    self._appendStr("f")
+                    self._appendStr("f%02x"%self.contentId)
             if remainingContentLen > r:
                 nxtContentIdx = contentIdx + r
             else:
@@ -430,7 +454,7 @@ class MUDP:
         s.close()
         return ret
 
-    def __init__(self, socket: any, clientMode: bool, maxPayload: int=65527):
+    def __init__(self, socket: any, clientMode: bool, skip: int, maxPayload: int=65527):
         self.maxPayload = maxPayload
         if maxPayload > 65527:
             raise Exception("maxPayload above UDP maximum "+str(maxPayload))
@@ -440,9 +464,8 @@ class MUDP:
                 +" smallest="+str(MUDPBuildMsg.sensibleSpaceForContent))
 
         self.s = socket
-        self.reader = MUDPReader(socket,maxPayload,clientMode)
+        self.reader = MUDPReader(socket,maxPayload,clientMode,skip)
         self.reader.start()
-        self.skip = False
         self.stop = False
         self.slept = 0
         self.lastRequestId = -1
@@ -487,14 +510,9 @@ class MUDP:
                 sleep(0.001)
                 continue
             countDown = 10
-            for i, (key, lst) in enumerate(self.reader.content.items()):
+            for key, lst in self.reader.content.items():
                 eomlst = self.reader.contentEOM[key]
-                for txt in lst:
-                    if self.skip > 0:
-                        self.skip -= 1
-                        if self.skip == 0:
-                            print("causing problems; skipping " + txt)
-                            continue
+                for i, txt in enumerate(lst):
                     yield key, txt, eomlst[i]
             self.reader.contentEOM = None
             self.reader.content = None
@@ -516,11 +534,6 @@ class MUDP:
             eoml = self.reader.contentEOM.get(requestId)
             eom = False
             for i, txt in enumerate(l):
-                if self.skip > 0:
-                    self.skip -= 1
-                    if self.skip == 0:
-                        print("causing problems; skipping " + txt)
-                        continue
                 yield txt, eoml[i]
             if eom:
                 del self.reader.contentEOM[requestId]
@@ -530,7 +543,7 @@ class MUDP:
                 self.reader.content[requestId] = None
 
     @staticmethod
-    def main():
+    def test(skip: int, l: list, maxPayload: int) -> int:
         ip = "127.0.0.1"
 
         clientS = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -543,14 +556,11 @@ class MUDP:
         serverS.bind((ip, 0))
         serverAddr = (ip,serverS.getsockname()[1])
 
-        maxPayload=30
-        client = MUDP(clientS, clientMode=True, maxPayload=maxPayload)
+        client = MUDP(clientS, clientMode=True, skip=0, maxPayload=maxPayload)
         print(str(clientS.getsockname())+" > "+str(serverAddr))
-        server = MUDP(serverS, clientMode=False, maxPayload=maxPayload)
+        server = MUDP(serverS, clientMode=False, skip=skip, maxPayload=maxPayload)
         print(str(serverS.getsockname())+" > "+str(clientAddr))
-        server.skip = 5
 
-        l = [("abcdefghijklmnopqrstuvwxyz", True), ("__samples", False), ("12345678901234567", False), ("123456789012345678", False), ("1234567890123456", True)]
         requestIds = []
         client_timestamps = []
         roundtrip_timestamps = []
@@ -562,9 +572,38 @@ class MUDP:
             if eom:
                 roundtrip_timestamps.append(time.time())
                 requestIds.append(requestId)
+        serverI = 0
         for (ip, port, requestId), txt, eom in server.recv():
             finish = time.time()
-            print("%.5f"%(finish-client_timestamps[-1])+" Server receiving \""+txt+"\" from="+str(ip)+":"+str(port)+" id="+str(requestId)+ " eom="+str(eom))
+            expectedTxt, expectedEOM = l[serverI]
+            serverI += 1
+            print("%.5f"%(finish-client_timestamps[-1]), end="")
+            failed = False
+            while expectedTxt != txt:
+                if serverI < len(l):
+                    expectedTxt, expectedEOM = l[serverI]
+                    serverI += 1
+                else:
+                    expectedTxt = None
+                    break
+            if expectedTxt is None:
+                print(" FAILED (recv text not matching\nexp=%s\ngot=%s\n"%(expectedTxt,txt), end="")
+                failed = True
+            elif eom and not expectedEOM:
+                print(" FAILED not expecting eom ", end="")
+                failed = True
+            elif not eom and expectedEOM:
+                print(" FAILED expecting eom ", end="")
+                failed = True
+            else:
+                print(" PASS ", end="")
+            print(" Server receiving \""+txt+"\" from="+str(ip)+":"+str(port)+" id="+str(requestId)+ " eom="+str(eom))
+            if failed:
+                print(server.reader.content)
+                print(server.reader.contentEOM)
+                print(server.reader.newContent)
+                print(server.reader.newContentEOM)
+                raise Exception("STOPPING due to failure")
             del client_timestamps[-1]
             if eom:
                 smsg = MUDPBuildMsg((ip,port),maxPayload,requestId)
@@ -580,12 +619,25 @@ class MUDP:
                     ts=finish-roundtrip_timestamps[-1]
                     del roundtrip_timestamps[-1]
                     if txt is None:
-                        print("%.3f"%ts+" Client got expired id="+str(requestId)+" eom="+str(eom))
+                        print("%.3f"%ts+" Client expired id="+str(requestId)+" eom="+str(eom))
                     else:
                         print("%.3f"%ts+" Client receiving \""+str(txt)+"\" id="+str(requestId)+" eom="+str(eom))
         print("Slept count client=%.5f"%client.slept+" server=%.5f"%server.slept)
         client.shutdown()
+        recvPacketCount = server.reader.packetCount
         server.shutdown()
+        return recvPacketCount
+
+    @staticmethod
+    def main():
+        maxPayload=30
+        l = [("abcdefghijklmnopqrstuvwxyz", True), ("__samples", False), ("12345678901234567", False), ("123456789012345678", False), ("1234567890123456", True)]
+        print("*******\nTest without incoming packet loss at server\n*******")
+        packetCount = MUDP.test(0, l, maxPayload)
+        print("Server packet count=%d\n"%packetCount)
+        for skip in range(1,packetCount+1):
+            print("*******\nTest with incoming packet %d lost at server\n*******"%skip)
+            MUDP.test(skip, l, maxPayload)
         
 if __name__ == "__main__":
     MUDP.main()
