@@ -44,8 +44,15 @@ import random
 import time
 
 
-# Manage ids and content for a request and timeout too.
 class MUDPDecodeMsg():
+    # TODO; a large number of requests can occur on the server,
+    # rather than walking thru all of the decodedMsg (every second)
+    # could instead manage timeouts in one second timer slots in
+    # MUDPDecodeMsgs, and then finding those expired is a simpler matter of
+    # expiring all of the MUDPDecodeMsg in the next slot.
+    # This would also be cleaner code, by having all of the timing in
+    # MUDPDecodeMsgs
+    expiredSeconds : int = 10
     def __init__(self, requestId: int):
         self.requestId = requestId
         if self.requestId is None:
@@ -53,7 +60,7 @@ class MUDPDecodeMsg():
         self.contentId = 0
         self.chunkId= 0
         self.content = ""
-        self.timer = 10
+        self.expiration = time.time() + self.expiredSeconds
         self.i = 0
         self.l = 0
         self.txt = None
@@ -159,10 +166,8 @@ class MUDPDecodeMsg():
             else:
                 raise Exception("Bad label " + label)
 
-    def isTimeout(self) -> bool:
-        if self.timer > 0:
-            self.timer -= 1
-        return self.timer == 0
+    def isTimeout(self, t : int) -> bool:
+        return self.expiration >= t
 
 
 class MUDPDecodeMsgs():
@@ -188,8 +193,9 @@ class MUDPDecodeMsgs():
     # Yields all MUDPBuildMsg that expired.
     def getAllTimeout(self) -> (any, MUDPDecodeMsg):
         toDelete = []
+        t = time.time()
         for k, v in self.decodeMsgs.items():
-            if v.isTimeout():
+            if v.isTimeout(t):
                 toDelete.append(k)
                 yield k, v
         for k in toDelete:
@@ -264,14 +270,18 @@ class MUDPReader(threading.Thread):
             self.newContent.setdefault(key,[]).append(None)
         
     def run(self):
+        ticking = time.time() + 1
         while not self.stop:
             ip_port = None
             txt = None
             try:
                 ready = select.select([self.s], [], [], 1)
-                if not ready[0]:
+                t = time.time()
+                if t > ticking:
+                    ticking = t + 1
                     self.timeout()
                     self.publish()
+                if not ready[0]:
                     continue
                 ret = self.s.recvfrom( self.maxPayload )
                 if ret is None:  # Socket closed.
@@ -321,7 +331,7 @@ class MUDPBuildMsg():
     sensibleSpaceForContent = ContentHdrLen + (ContentHdrLen * 2)
     ChunkHdrLen = len("f11223333".encode('utf-8'))
 
-    requestId: int = int(random.random() * 0xffff)
+    requestId: int = int(random.random()) & 0xffff
     @staticmethod
     def nextId() -> int:
         MUDPBuildMsg.requestId = (MUDPBuildMsg.requestId + 1) & 0xffff
@@ -437,6 +447,12 @@ class MUDPBuildMsg():
             self.reset()
 
 
+# TODO; the clientMode option, should the API be two separate classes i.e.
+# MUDPClient and MUDPServer? Or, should both client and server be able to
+# sent requests that require to wait for a response, and then the API
+# should change from send(), to sendRequest() and sendResponse().
+# At leat, the decision of request vs response should be within MUDPBuildMsg,
+# it should decide whether to wait for a response.
 class MUDP:
     @staticmethod
     def nextId(i: int) -> int:
@@ -454,7 +470,7 @@ class MUDP:
         s.close()
         return ret
 
-    def __init__(self, socket: any, clientMode: bool, skip: int, maxPayload: int=65527):
+    def __init__(self, socket: any, clientMode: bool, skip: int = 0, maxPayload: int=65527):
         self.maxPayload = maxPayload
         if maxPayload > 65527:
             raise Exception("maxPayload above UDP maximum "+str(maxPayload))
@@ -492,7 +508,9 @@ class MUDP:
             sent = True
             self.s.sendto(b, msg.getRemoteAddr())
         if sent:
-            self.reader.addRequestId(requestId)
+            if self.reader.clientMode:
+                # Clients are waiting for the response, and want a timeout for the requestId.
+                self.reader.addRequestId(requestId)
             return requestId
         return -1
 
@@ -604,7 +622,6 @@ class MUDP:
                 print(server.reader.newContent)
                 print(server.reader.newContentEOM)
                 raise Exception("STOPPING due to failure")
-            del client_timestamps[-1]
             if eom:
                 smsg = MUDPBuildMsg((ip,port),maxPayload,requestId)
                 s = "Ack to "+str(requestId)
