@@ -44,14 +44,13 @@ import random
 import time
 
 
+# MUDPDecodeMsg assembles chunks into content, holds partial
+# content while it waits for the remaining chunk(s), and yields the content.
+# Content id and Chunk id are used to detect missing chunks and chunks
+# that are received out of order.
+# A timestamp is used to measure the period in between content, and the
+# message is expired when this period is too large.
 class MUDPDecodeMsg():
-    # TODO; a large number of requests can occur on the server,
-    # rather than walking thru all of the decodedMsg (every second)
-    # could instead manage timeouts in one second timer slots in
-    # MUDPDecodeMsgs, and then finding those expired is a simpler matter of
-    # expiring all of the MUDPDecodeMsg in the next slot.
-    # This would also be cleaner code, by having all of the timing in
-    # MUDPDecodeMsgs
     expiredSeconds : int = 10
     def __init__(self, requestId: int):
         self.requestId = requestId
@@ -161,6 +160,7 @@ class MUDPDecodeMsg():
                 chunkLen = self._decodeHex(4)
                 self.content += self._decodeStr(chunkLen)
                 if label in ["o", "f"]:
+                    self.expiration = time.time() + self.expiredSeconds
                     yield self.content, self.eom
                     self.content = ""
             else:
@@ -170,6 +170,9 @@ class MUDPDecodeMsg():
         return self.expiration >= t
 
 
+# A dictionary of Messages being decoded. find() keys by Request Id, and is
+# for clients. get() keys by IP Address and Request Id, and is for servers.
+# All messages can expire.
 class MUDPDecodeMsgs():
     def __init__(self):
         self.decodeMsgs = {}
@@ -190,7 +193,6 @@ class MUDPDecodeMsgs():
             self.decodeMsgs[key] = decodeMsg
         return decodeMsg
 
-    # Yields all MUDPBuildMsg that expired.
     def getAllTimeout(self) -> (any, MUDPDecodeMsg):
         toDelete = []
         t = time.time()
@@ -201,9 +203,23 @@ class MUDPDecodeMsgs():
         for k in toDelete:
             del self.decodeMsgs[k]
 
-# Reader has two modes: Client mode, or collection mode, were responses from
-# different nodes are stored against the request id. Server mode were
-# responses are store against the node address and request id.
+# Reader-thead receives packets, each packet contains a chunk of a message.
+# The chunks are assembled to make Content which is published to the
+# consumer threads.
+#
+# The communication between the Reader-thread and Consumer-thread is using a
+# principle used by device-drivers which does not need a mutex. There is a
+# single variable, called self.content. When None it is assigned a list of
+# new content by the Reader-thread. When not None the Consumer-thread
+# starts consuming the mew content but first self.content is set back to None.
+# Using a variable in this way does not require a mutex.
+#
+# Reader has two modes: Client mode and Server mode.
+# Client mode: receive Response messages, can receive responses from
+# different nodes, and stores the response message against the Request Id.
+# Server mode: receives requests and stores them against the Client's IP
+# Address and Request Id, and can receive requests using the same
+# Id from different Clients.
 class MUDPReader(threading.Thread):
     def __init__(self, socket: any, maxPayload: int, client: bool, skip: int):
         threading.Thread.__init__(self)
@@ -231,16 +247,11 @@ class MUDPReader(threading.Thread):
             return -1
 
     def addRequestId(self, requestId: int) -> None:
+        # Clients are waiting for the response, and want a timeout for the requestId.
         if self.clientMode:
             self.decodeMsgs.addRequestId(requestId)
             self.content[requestId] = None
 
-    # Add newly arrived content when consumer has read all of the prior
-    # published contemt.
-    # It's different from Server and Client. Client block on the request id,
-    # and new content for that request id should be queued when other queues
-    # are remain full. Server consumes all request ids and new content is
-    # published when all prior content is consumed.
     def publish(self):
         if self.clientMode:
             deleteIDs = []
@@ -508,9 +519,7 @@ class MUDP:
             sent = True
             self.s.sendto(b, msg.getRemoteAddr())
         if sent:
-            if self.reader.clientMode:
-                # Clients are waiting for the response, and want a timeout for the requestId.
-                self.reader.addRequestId(requestId)
+            self.reader.addRequestId(requestId)
             return requestId
         return -1
 
@@ -521,19 +530,23 @@ class MUDP:
         countDown = 30
         while countDown > 0:
             self.reader.publish()
-            if self.reader.content is None:
+            content = self.reader.content
+            if content is None:
                 # Wait for something to arrive via the reader thread.
                 countDown -= 1
                 self.slept += 0.001
                 sleep(0.001)
                 continue
-            countDown = 10
-            for key, lst in self.reader.content.items():
-                eomlst = self.reader.contentEOM[key]
-                for i, txt in enumerate(lst):
-                    yield key, txt, eomlst[i]
+            contentEOM = self.reader.contentEOM
+            # Let the reader thread publish more content while we process
+            # what has already been published.
             self.reader.contentEOM = None
             self.reader.content = None
+            countDown = 10
+            for key, lst in content.items():
+                eomlst = contentEOM[key]
+                for i, txt in enumerate(lst):
+                    yield key, txt, eomlst[i]
 
     # Get responses.
     def recvRequestId(self, requestId: int) -> (str, bool):
@@ -560,6 +573,12 @@ class MUDP:
                 self.reader.contentEOM[requestId] = None
                 self.reader.content[requestId] = None
 
+    # Runs the testcases found in the list. The List is tuples of content and
+    # a boolean value. True means last content for the message, False
+    # means first or next content for the message.
+    # Skip can be set to trigger message loss. A skip number of zero means
+    # don't loose any packet, A skip number of one(1) means ignore the first
+    # packet, etc.
     @staticmethod
     def test(skip: int, l: list, maxPayload: int) -> int:
         ip = "127.0.0.1"
@@ -583,6 +602,9 @@ class MUDP:
         client_timestamps = []
         roundtrip_timestamps = []
         msg = MUDPBuildMsg(serverAddr,maxPayload,None)
+        # Send all the content from the List.
+        # Grab the time of sending each content, for measuring content latency.
+        # Grab the time of sending each last content, for measuring round trip latency.
         for txt, eom in l:
             client_timestamps.append(time.time())
             requestId = client.send(txt, eom, msg)
@@ -595,15 +617,16 @@ class MUDP:
             finish = time.time()
             expectedTxt, expectedEOM = l[serverI]
             serverI += 1
-            print("%.5f"%(finish-client_timestamps[-1]), end="")
             failed = False
             while expectedTxt != txt:
                 if serverI < len(l):
+                    print("WARNING: skipping forward, did not receive %s" % expectedTxt)
                     expectedTxt, expectedEOM = l[serverI]
                     serverI += 1
                 else:
                     expectedTxt = None
                     break
+            print("%.5f"%(finish-client_timestamps[-1]), end="")
             if expectedTxt is None:
                 print(" FAILED (recv text not matching\nexp=%s\ngot=%s\n"%(expectedTxt,txt), end="")
                 failed = True
