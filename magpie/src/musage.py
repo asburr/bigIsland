@@ -16,15 +16,19 @@
 #  cpuUsage(), cpuFree()
 #  diskUsage(dir="/"), diskFree(dir="/")
 # Notes:
-# The only complexity is cpu usage which handles being called too frequently
-# by comparing usage at least one second in the past.
+# CPU Usage is complex. CPU values are running totals. Current
+# percentage is derived from the different between current totals and totals
+# gather a least a second ago. See the list self.cpuidle. cpuidle[0] is
+# total from at least one second ago. cpuidle[1] is recent totals. cpuidle[2]
+# is current usage.
+
 import psutil
 from time import sleep
 import socket
 
 
 class MUsage():
-    
+
     def __init__(self):
         self.cpuusage = [0, 0, 0]
         self.cpuidle = [0, 0, 0]
@@ -47,7 +51,7 @@ class MUsage():
         di = (self.cpuidle[1] - self.cpuidle[0])
         self.oneSecondDelta = dt + di
         if not self.oneSecondDelta:
-            raise Exception("no memory inc during initialization")
+            raise Exception("psutil did not return CPU counts while sleep(1) during initialization")
         self.host = socket.gethostname()
         if not self.host:
             raise Exception("No hostname")
@@ -59,9 +63,6 @@ class MUsage():
         return int(psutil.virtual_memory().available * 100 /
                    psutil.virtual_memory().total)
 
-    # 0 at least one second ago but could be more.
-    # 1 most recent usage.
-    # 2 Current usage.
     def _cpuUpdate(self, init: bool = False) -> (int, int):
         u = psutil.cpu_times()
         self.cpuusage[2] = (
@@ -74,6 +75,8 @@ class MUsage():
         di = (self.cpuidle[2] - self.cpuidle[1])
         d = dt + di
         if d > self.oneSecondDelta:
+            # One second of total counts between [2] and [1], move
+            # counts down:
             self.cpuusage[0] = self.cpuusage[1]
             self.cpuidle[0] = self.cpuidle[1]
             self.cpuusage[1] = self.cpuusage[2]

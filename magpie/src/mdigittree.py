@@ -9,7 +9,6 @@
 # GNU General Public License for more details.
 # 
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
-import sys
 
 
 class MDigitsNode:
