@@ -11,24 +11,35 @@
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
 #
 
-import socket
-import select
+from magpie.src.mudp import MUDP
 import tarfile
 import os.path
+import traceback
 # import ZipFile
 # import gzip
 import pandas as pd
 from discovery.src.CSVParser import CSVParser
+from discovery.src.JSONParser import JSONSchema
 from magpie.src.mworksheets import MWorksheets
+from magpie.src.mudp import MUDPBuildMsg
 import json
-from time import sleep
 from abc import ABC, abstractmethod
 import re
+import socket
+from time import sleep
 
 
 class Cmd(ABC):
     @abstractmethod
-    def sample(self, feedName: str, n:int) -> dict:
+    def headers(self) -> list:
+        raise Exception("Not implemented")
+
+    @abstractmethod
+    def schema(self) -> list:
+        raise Exception("Not implemented")
+
+    @abstractmethod
+    def sample(self, feedName: str, n:int) -> (bool, dict):
         raise Exception("Not implemented")
 
     @abstractmethod
@@ -46,19 +57,24 @@ class Files(Cmd):
             self.feeds.append({
                 "feed": feed["feed"],
                 "regex": re.compile(feed["regex"], re.IGNORECASE),
-                "order": {}
+                "order": {},
+                "schema": JSONSchema()
             })
 
-    def sample(self, feedName: str, n:int) -> dict:
+    def schema(self) -> list:
+        return ["stream", "filename"]
+
+    def sample(self, feedName: str, n:int) -> (bool, dict):
         i = 0
         if feedName:
-            feed = self.feeds[feedName]
-            for modifiedTime in feed["order"]:
-                for pn in feed["order"][modifiedTime]:
-                    yield pn
-                    i += 1
-                    if i == n:
-                        return
+            for feed in self.feeds:
+                if feed["feed"] == feedName:
+                    for modifiedTime in feed["order"]:
+                        for pn in feed["order"][modifiedTime]:
+                            i += 1
+                            yield (i == n, pn)
+                            if i == n:
+                                return
         else:
             j = n / len(self.feeds)
             if j == 0:
@@ -69,11 +85,11 @@ class Files(Cmd):
                 kfeeds[f] = 0
                 for modifiedTime in feed["order"]:
                     for pn in feed["order"][modifiedTime]:
-                        yield {"stream": f, "file": pn}
+                        i += 1
+                        yield (i == n, {"feed": f, "file": pn})
                         if kfeeds[f] == j:
                             break
                         kfeeds[f] += 1
-                        i += 1
                         if i == n:
                             return
                     if kfeeds[f] == j:
@@ -84,14 +100,14 @@ class Files(Cmd):
                 for modifiedTime in feed["order"]:
                     for pn in feed["order"][modifiedTime]:
                         if j > kfeeds[f]:
-                            yield {"stream": f, "file": pn}
                             i += 1
+                            yield (i == n,{"stream": f, "file": pn})
                             if i == n:
                                 return
 
     def execute(self) -> None:
         self._scandir(self.depth)
-        print(list(self.sample(None,10)))
+        # print(list(self.sample(None,10)))
 
     def _scandir(self, depth: int) -> None:
         for de in os.scandir(self.path):
@@ -102,6 +118,7 @@ class Files(Cmd):
                     for feed in self.feeds:
                         if feed["regex"].match(pn):
                             self.files.add(pn)
+                            feed["schema"].gather("", pn)
                             feed["order"].setdefault(
                                 sr.st_mtime,[]).append(pn)
                             break
@@ -117,7 +134,10 @@ class Loadf(Cmd):
             '.__tar.gz__': self.__read__targz__
         }
 
-    def sample(self, feedName: str, n:int) -> dict:
+    def schema(self) -> list:
+        return []
+
+    def sample(self, feedName: str, n:int) -> (bool, dict):
         return
 
     def execute(self) -> None:
@@ -178,75 +198,49 @@ class Loadf(Cmd):
 
 
 
-class Jah:
-    def __init__(self, identification: str, halleludir: str):
+class Jah():
+    def __init__(self, identification: str, halleludir: str, worksheetdir: str):
+        host = socket.gethostname()
+        try:
+            fn = os.path.join(halleludir,"hosts.json")
+            with open(fn,"r") as f:
+                j = json.load(f)
+                self.summit_addr = (j[host]["ip"], j[host]["port"])
+        except:
+            raise Exception("Failed to find summit hallelu, "+host+", in "+fn)
+        self.ip = MUDP.getIPAddressForTheInternet()
+        self.port = 0
+        self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.s.settimeout(5.0)
+        # '' is ENYADDR, 0 causes bind to select a random port.
+        # IPv6 requires socket.bind((host, port, flowinfo, scope_id))
+        self.s.bind((self.ip, self.port))
+        self.port = self.s.getsockname()[1]
         self.id = identification
         self.halleludir = halleludir
         fn = os.path.join(self.halleludir,"jah_" + self.id + ".json")
         with open(fn, "r") as f:
             j = json.load(f)
-        self.stop = False
-        self.ip = j["ip"]
-        self.port = j["port"]
-        self.init_socket()
-        # Add port number to the hallelu file.
-        with open(fn, "r") as f:
-            j = json.load(f)
+            self.cmd = j["cmd"]
         with open(fn, "w") as f:
+            j["ip"] = self.ip
             j["port"] = self.port
             json.dump(j,f)
-        self.cmd = j["cmd"]
+        self.ws = MWorksheets(worksheetdir)
+        self.stop = False
         self.cmdname = MWorksheets.cmdName(self.cmd)
         if self.cmdname == "files":
             self.op = Files(self.cmd[self.cmdname])
         else:
-            raise Exception("unknonw command " + self.cmdname)
-        self.msgid = 0
-        self.msgSeq = 0
+            raise Exception("unknown command " + self.cmdname)
+        self.mudp = MUDP(socket=self.s, clientMode=False)
+        print(str(self.port)+":"+self.id+" jah says hello " + str(self.ip))
 
-    def init_socket(self) -> None:
-        self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.s.settimeout(0)  # Blocks for 5 seconds when nothing to process.
-        # '' is ENYADDR, 0 causes bind to select a random port.
-        # IPv6 requires socket.bind((host, port, flowinfo, scope_id))
-        self.s.bind((self.ip, self.port))
-        if not self.port:
-            # bind selected a random port, get it!
-            self.port = self.s.getsockname()[1]
-        print(self.id +":"+str(self.port)+" Jah says hello " + str(self.ip))
-
-    def poll(self) -> None:
-        while not self.stop:
-            j = self.receiveCmd()
-            if not self.runCmd(j):
-                sleep(0.1)
-
-    def receiveCmd(self) -> dict:
-        ready = select.select([self.s], [], [], 1)
-        if not ready[0]:
-            return None
-        (data, ip_port) = self.s.recvfrom(4096)
-        try:
-            j = json.loads(data.decode('utf-8'))
-        except json.JSONDecodeError as err:
-            print("Failed to parse cmds from " + str(ip_port))
-            print(err)
-            return None
-        except Exception as e:
-            print("Failed to parse cmds " + str(e) + " from " + str(ip_port))
-            return None
-        errors = self.ws.verifycmd(j)
-        if errors:
-            print("Failed to parse cmds " + errors + " from " + str(ip_port))
-            return None
-        j["__remote_address__"] = ip_port
-        return j
-
-    def runCmd(self, remotecmd: any) -> bool:
+    def runCmd(self, remotecmd: any, requestId: int) -> bool:
         if remotecmd is not None:
             cmdname = MWorksheets.cmdName(remotecmd)
             if cmdname == "_sample_":
-                self.sample(remotecmd[cmdname])
+                self.sample(remotecmd, requestId)
             else:
                 raise Exception("Unknown command " + cmdname)
             return True
@@ -256,39 +250,46 @@ class Jah:
             return True
         return False
 
-    def startSend(self, begintxt: str):
-        self.msgSeq = 0
-        self.msgId += 1
-        if self.msgId > 255:
-            self.msgId = 0
-        self.txt = "%2x%2x"+begintxt % (self.msgid, self.msgSeq)
+    def sample(self, cmd: any, requestId: int) -> None:
+        cmd = cmd["_sample_"]
+        msg=MUDPBuildMsg(
+                remoteAddr=cmd["__remote_address__"],
+                requestId=requestId)
+        self.mudp.send(
+            content=json.dumps({
+                "_sample_response_": {
+                    "schema": self.op.schema()
+                }
+            }),
+            eom=False, msg=msg
+        )
+        for eom, sample in self.op.sample( cmd["feed"], cmd["N"]):
+            if self.mudp.cancelledRequestId(requestId):
+                break
+            self.mudp.send(
+                content=json.dumps(sample),
+                eom=eom, msg=msg
+            )
 
-    def send(self, addr, begintxt: str, txt: str, conttxt: str, endtxt: str) -> None:
-        if len(self.txt) + len(txt) + len(endtxt) > 65527:
-            self.txt += endtxt
-            self.s.sendto(self.txt.encode('utf-8'), addr)
-            self.msgSeq += 1
-            if self.msgSeq > 255:
-                self.msgSeq = 0
-            self.txt = ("%2x%2x"+begintxt + txt) % (self.msgid, self.msgSeq)
-        else:
-            self.txt + conttxt + txt
-        
-    def flush(self, addr, endtxt: str) -> None:
-        self.txt += endtxt
-        self.s.sendto(self.txt.encode('utf-8'), addr)
-        self.txt = None
-
-    def sample(self, cmd: any) -> None:
-        addr = cmd["__remote_address__"]
-        begintxt = "{\"_sample_response_\":["
-        endtxt = "]}"
-        self.startsend(begintxt)
-        for sample in self.op.sample(cmd["N"]):
-            self.send(addr,begintxt, json.dumps(sample), ",", endtxt)
-        self.flush(addr,endtxt)
+    def poll(self) -> None:
+        while not self.stop:
+            didSomething = False
+            for ((ip, port, requestId), content, eom) in self.mudp.recv():
+                didSomething = True
+                cmd = json.loads(content)
+                self.runCmd(cmd, requestId)
+            if not didSomething:
+                sleep(0.1)
+        for p in self.processes:
+            # Wait for child to terminate
+            p.join()
 
     @staticmethod
-    def child_main(identification: str, halleludir: str) -> None:
-        jah = Jah(identification, halleludir)
-        jah.poll()
+    def child_main(identification: str, halleludir: str, worksheetdir: str) -> None:
+        try:
+            jah = Jah(identification, halleludir, worksheetdir)
+            jah.poll()
+        except:
+            traceback.print_exc()
+        print("Jah terminated " + str(jah.port))
+

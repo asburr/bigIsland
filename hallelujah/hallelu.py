@@ -29,18 +29,19 @@
 # will use the same socket for all Users.
 # 
 # 
-import socket
-import select
 import json
 import os
 from inspect import currentframe
 from magpie.src.mworksheets import MWorksheets
 from magpie.src.musage import MUsage
 from magpie.src.mzdatetime import MZdatetime
+from magpie.src.mudp import MUDP, MUDPBuildMsg
 from hallelujah.jah import Jah
 from multiprocessing import Process
 import argparse
 from time import sleep
+import traceback
+import socket
 
 
 def Error(stack: list, error:str) -> str:
@@ -48,34 +49,35 @@ def Error(stack: list, error:str) -> str:
     return "Error"+str(cf.f_back.f_lineno)+" at "+".".join(stack)+" "+error
 
 
-class Hallelu:
+class Hallelu():
     def __init__(self, identification: str,
                  worksheetdir: str, halleludir: str):
+        self.id = identification
+        self.halleludir = halleludir
+        self.localHost = socket.gethostname()
+        self.summitAddr, (self.ip, self.port) = self.readLocalHost()
+        fn = "hall_" + self.id + ".json"
+        if self.id == "summit":
+            self.halls = {}  # <feed>: <addr>
+            self.removeHalleluFiles()
+            with open(os.path.join(self.halleludir,fn), "w") as f:
+                json.dump({"port": self.port, "ip": self.ip, "cmd": None},f)
+        self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.s.settimeout(5.0)
+        address = (self.ip, self.port)
+        try:
+            self.s.bind(address)
+        except:
+            raise Exception("Hallelu failed to bind to address " + str(address) + " host public ip is " + str(MUDP.getIPAddressForTheInternet()))
+        self.mudp = MUDP(self.s, clientMode=False)
         # Read archived worksheets.
         self.ws = MWorksheets(worksheetdir)
         self.ws.expandcmds()
         self.processes = []
-        self.halleludir = halleludir
         self.stop = False
-        self.usage = MUsage()
-        self.id = identification
-        self.ip = self.getIPAddressForTheInternet()
-        self.port = 0
-        if self.id == "summit":
-            # The summit port number is static, read it from cfg.
-            with open(os.path.join(self.halleludir,"hosts.json"),"r") as f:
-                j = json.load(f)
-                self.port = j[self.usage.host]["port"]
-        self.init_socket()
         self.jah_count = 0
-        self.usage_tick = 0
-        fn = "hall_" + self.id + ".json"
-        if self.id == "summit":
-            # Delete any past hallelu files.
-            self.removeHalleluFiles()
-            with open(os.path.join(self.halleludir,fn), "w") as f:
-                json.dump({"port": self.port, "ip": self.ip, "cmd": None},f)
-        else:
+        if self.id != "summit":
+            self.jahs = []  # <addr>
             # Add port number to the hallelu file.
             with open(os.path.join(self.halleludir,fn), "r") as f:
                 j = json.load(f)
@@ -83,24 +85,35 @@ class Hallelu:
                 j["port"] = self.port
                 json.dump(j,f)
             self.createJah(j)
+        self.usage_tick = 0
+        self.usage = MUsage()
+        print(str(self.port)+":"+self.id+" Hallalelu says hello " + str(self.ip))
 
-    @staticmethod
-    def getIPAddressForTheInternet() -> str:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ret = s.getsockname()[0]
-        s.close()
-        return ret
+    # Return Summit address, Local address
+    def readLocalHost(self) -> ((str, int), (str, int)):
+        try:
+            fn = os.path.join(self.halleludir,"hosts.json")
+            with open(fn,"r") as f:
+                j = json.load(f)
+                summit = (j[self.localHost]["ip"], j[self.localHost]["port"])
+                if self.id == "summit":
+                    address = summit
+                else:
+                    address = (j[self.localHost]["ip"], 0)
+                return (summit,address)
+        except:
+            traceback.print_exc()
+            raise Exception("Failed to find summit hallelu, "+self.localHost+", in "+fn)
 
     def createJah(self, j: dict) -> None:
         self.jah_count += 1
-        identification = str(self.jah_count)
+        identification = self.id+"_"+str(self.jah_count)
         fn = os.path.join(self.halleludir,"jah_"+identification+".json" )
         j["port"] = 0
         with open(fn,"w") as f:
             json.dump(j,f)
         p = Process(target=Jah.child_main,
-                    args=[identification, self.halleludir])
+                    args=[identification, self.halleludir,self.ws.dir])
         self.processes.append(p)
         p.start()
         # wait for child to start.
@@ -108,6 +121,8 @@ class Hallelu:
             with open(fn,"r") as f:
                 j = json.load(f)
             sleep(0.5)
+        self.jahs.append((j["ip"],j["port"]))
+        print(self.jahs[-1])
 
     def removeHalleluFiles(self) -> None:
         for fn in os.listdir(path=self.halleludir):
@@ -119,11 +134,10 @@ class Hallelu:
                     j = json.load(f)
                     for host in j:
                         j[host] = {"port": j[host]["port"], "ip": j[host]["ip"]}
-                x = {"port": 16085, "ip": self.getIPAddressForTheInternet()}
                 if host not in j:
-                    raise Exception("Missing "+host+" in hosts.json, please add "+str(x))
-                if j[host]["ip"] != x["ip"]:
-                    raise Exception(host+" in hosts.json, ip address has changed to "+x["ip"])
+                    raise Exception("Missing "+host+" in hosts.json")
+                if len(j[host]["ip"]) > 0 and j[host]["ip"] != MUDP.getIPAddressForTheInternet():
+                    raise Exception(host+" in hosts.json, ip address has changed to "+MUDP.getIPAddressForTheInternet())
                 with open(os.path.join(self.halleludir,"hosts.json"),"w") as f:
                     json.dump(j,f)
             elif fn.startswith("hall_"):
@@ -131,26 +145,13 @@ class Hallelu:
             elif fn.startswith("jah_"):
                 os.remove(os.path.join(self.halleludir,fn))
 
-    def init_socket(self) -> None:
-        self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.s.settimeout(0)  # Blocks for 5 seconds when nothing to process.
-        # '' is ENYADDR, 0 causes bind to select a random port.
-        # IPv6 requires socket.bind((host, port, flowinfo, scope_id))
-        self.s.bind((self.ip, self.port))
-        if not self.port:
-            # bind selected a random port, get it!
-            self.port = self.s.getsockname()[1]
-        print(self.id+":"+str(self.port)+" Hallelu says hello " + str(self.ip))
-
     def playWorksheets(self) -> None:
         for wsn in self.ws.titles():
             for cmd in self.ws.sheet(wsn):
                 self.nextCmd(cmd)
-                return  # TODO; remove to play all cmds.
+                return  # TODO; duebgging stops playing the work sheer, remove to play all cmds.
 
     def getusage(self) -> None:
-        if self.id != "summit":
-            return
         if self.usage_tick:
             self.usage_tick -= 1
             return
@@ -159,50 +160,46 @@ class Hallelu:
         with open(os.path.join(self.halleludir,"hosts.json"),"r") as f:
             j = json.load(f)
             txt = json.dumps({"_usage_": True})
-            msg = txt.encode('utf-8')
             for host in j.keys():
-                addr = (j[host]["ip"], j[host]["port"])
-                self.s.sendto(msg, addr)
+                self.mudp.send(
+                    content=txt,
+                    eom=True,
+                    msg=MUDPBuildMsg(
+                        remoteAddr=(j[host]["ip"], j[host]["port"]),
+                        requestId=MUDPBuildMsg.nextId()
+                    )
+                )
 
     def poll(self) -> None:
         if self.id == "summit":
             self.playWorksheets()
         while not self.stop:
-            self.getusage()
-            j = self.receiveCmd()
-            if j:
-                self.nextCmd(j)
-            else:
+            if self.id == "summit":
+                self.getusage()
+            didSomething = False
+            for ((ip, port, requestId), content, eom) in self.mudp.recv():
+                didSomething = True
+                cmd = json.loads(content)
+                if "__remote_address__" not in cmd:
+                    # The remote_address is the originator and is stored in
+                    # the command, so the response is sent to the originator.
+                    cmd["__remote_address__"] = (ip, port)
+                if "__request_id__" not in cmd:
+                    # The request id is stored in the command, so the response
+                    # is to the original request id.
+                    cmd["__request_id__"] = requestId               
+                self.nextCmd(cmd)
+            if not didSomething:
                 sleep(0.1)
         for p in self.processes:
             # Wait for child to terminate
             p.join()
 
-    def receiveCmd(self) -> dict:
-        ready = select.select([self.s], [], [], 1)
-        if not ready[0]:
-            return None
-        (data, ip_port) = self.s.recvfrom(4096)
-        try:
-            j = json.loads(data.decode('utf-8'))
-        except json.JSONDecodeError as err:
-            print("Failed to parse cmds from " + str(ip_port))
-            print(err)
-            return None
-        except Exception as e:
-            print("Failed to parse cmds " + str(e) + " from " + str(ip_port))
-            return None
-        errors = self.ws.verifycmd(j)
-        if errors:
-            print("Failed to parse cmds " + errors + " from " + str(ip_port))
-            return None
-        j["__remote_address__"] = ip_port
-        return j
-
-    def halleluCmd(self, title: str, cmd: dict) -> None:
+    def localCmd(self, title: str, cmd: dict) -> None:
+        print("localCmd " + title)
         if title == "_usage_":
-            # Request for host usage.
-            msg = json.dumps({
+            self.mudp.send(
+                content=json.dumps({
                     "_usage_response_": {
                             "host": self.usage.host,
                             "cpuUsage": self.usage.cpuUsage(),
@@ -210,8 +207,13 @@ class Hallelu:
                             "memoryUsage": self.usage.memoryUsage(),
                             "timestamp": MZdatetime().strftime()
                             }
-                    }).encode('utf-8')
-            self.s.sendto(msg, cmd["__remote_address__"])
+                    }
+                ).encode('utf-8'),
+                eom=True,
+                msg=MUDPBuildMsg(
+                        remoteAddr=cmd["__remote_address__"]),
+                        requestId=cmd["__request_id__"]
+                )
         elif title == "_usage_response_":
             # Update host.json with host usage response.
             with open(os.path.join(self.halleludir,"hosts.json"),"r") as f:
@@ -221,15 +223,40 @@ class Hallelu:
                     h[cmd["host"]][k] = cmd[k]
             with open(os.path.join(self.halleludir,"hosts.json"),"w") as f:
                 json.dump(h,f)
+        elif title == "_sample_":
+            if self.id == "summit":
+                # Send to Hallelu responsible for the feed.
+                self.mudp.send(
+                    content=json.dumps(cmd).encode('utf-8'),
+                    eom=True,
+                    msg=MUDPBuildMsg(
+                        remoteAddr=self.halls[cmd["_sample_"]["feed"]],
+                        requestId=cmd["__request_id__"]
+                    ),
+                )
+            else:
+                # Send to ONE of the Jahs responsible for holding the data.
+                for jah in self.jahs:
+                    self.mudp.send(
+                        content=json.dumps(cmd).encode('utf-8'),
+                        eom=True,
+                        msg=MUDPBuildMsg(
+                            remoteAddr=jah,
+                            requestId=cmd["__request_id__"]
+                        )
+                    )
+                    break
         else:
             raise Exception("Unexpected message " + str(cmd))
 
     # Create a Hallelu to manage the Jahs that run this new command.
+    # TODO; waiting for the Hallelu to create itself will block the summit
+    # hallelu from other tasks; have a thread create new Hallelu.
     def newHalleluCmd(self, cmd: dict) -> None:
         cmdtitle = self.ws.cmdName(cmd) + "_" + self.ws.cmdFeed(cmd)[0]
         fn = "hall_" + cmdtitle + ".json"
         if os.path.exists(os.path.join(self.halleludir,fn)):
-            raise Exception("Dulicate cmd " + fn)
+            raise Exception("Duplicate cmd " + fn)
         j = {"port": 0, "ip": self.ip, "cmdtitle": cmdtitle, "cmd": cmd}
         with open(os.path.join(self.halleludir,fn),"w") as f:
             json.dump(j,f)
@@ -242,11 +269,15 @@ class Hallelu:
             with open(os.path.join(self.halleludir,fn),"r") as f:
                 j = json.load(f)
             sleep(0.5)
+        for feed in self.ws.cmdFeed(cmd):
+            self.halls[feed] = (j["ip"],j["port"])
+            print(feed)
+            print(self.halls[feed])
 
     def nextCmd(self, cmd: dict) -> None:
         title = self.ws.cmdName(cmd)
         if title.startswith("_"):
-            self.halleluCmd(title,cmd)
+            self.localCmd(title,cmd)
         else:
             if self.id == "summit":
                 self.newHalleluCmd(cmd)
@@ -256,10 +287,14 @@ class Hallelu:
     @staticmethod
     def child_main(ip: str, identification: str,
                  worksheetdir: str, halleludir: str):
-        h = Hallelu(identification=identification,
-                worksheetdir=worksheetdir,
-                halleludir=halleludir)
-        h.poll()
+        try:
+            h = Hallelu(identification=identification,
+                    worksheetdir=worksheetdir,
+                    halleludir=halleludir)
+            h.poll()
+        except:
+            traceback.print_exc()
+        print("Hall terminated " + str(h.port))
 
     @staticmethod
     def main():

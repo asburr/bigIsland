@@ -14,9 +14,11 @@
 # Usage:
 # export PYTHONPATH=.
 # python3 sheet/wi.py
+import socket
 import argparse
 import traceback
-
+import json
+import os
 try:
     import wx
     import wx.grid
@@ -26,23 +28,72 @@ except Exception:
     print("sudo apt-get install libgtk-3-dev")
     print("pip3 install -U -f https://extras.wxpython.org/wxPython4/extras/linux/gtk3/ubuntu-18.04 wxPython")
     exit(1)
-
+from magpie.src.musage import MUsage
+from magpie.src.mudp import MUDP, MUDPBuildMsg
 from magpie.src.mworksheets import MWorksheets
 from sheet.QueryParams import QueryParams
 from sheet.Grid import WiGrid
 
 
-class WiFramedGrid(wx.Frame):
-    def __init__(self, title: str, data: dict):
+class WiSampleGrid(wx.Frame):
+    def __init__(self, title: str, remoteAddr: (str,int), mudp: MUDP):
         wx.Frame.__init__(self, parent=None, title=title)
         boxSizer = wx.BoxSizer(wx.VERTICAL)
+        self.mudp = mudp
         self.panel = wx.Panel(self)
-        self.grid = WiGrid(self.panel,data["titles"], data["rows"])
+        self.label = wx.TextCtrl(self.panel, style=wx.TE_READONLY, value="0 rows (loading)")
+        boxSizer.Add(self.label, proportion=0, flag=wx.EXPAND)
+        self.headers=[]
+        self.rows=[]
+        self.grid = WiGrid(self.panel, titles=self.headers, row_col=self.rows)
         boxSizer.Add(self.grid.getGrid(), proportion=1, flag=wx.EXPAND)
         self.panel.SetSizer(boxSizer)
         self.panel.Layout()
         self.Layout()
         self.Show()
+        self.requestId = self.mudp.send(
+            content=json.dumps({"_sample_":{"feed":title, "N":100}}),
+            eom=True,
+            msg=MUDPBuildMsg(remoteAddr=remoteAddr,
+                             requestId=MUDPBuildMsg.nextId())
+        )
+        self.timer = wx.PyTimer(self.timerTick)
+        self.timer.Start(100)
+        self.Bind(wx.EVT_CLOSE, self.onClose)
+
+    def onClose(self, event):
+        self.timer.Stop()
+        self.mudp.cancelRequestId(self.requestId)
+        self.Destroy()
+
+    def timerTick(self):
+        eom = False
+        updates = False
+        for ret in self.mudp.recvRequestId(self.requestId):
+            content, eom = ret
+            if content is not None:
+                j = json.loads(content)
+                if self.headers is None:
+                    updates = True
+                    self.headers = j["_sample_response_"]["schema"]
+                elif content:  # None content when timeout.
+                    updates = True
+                    row = []
+                    for header in self.headers:
+                        row.append(j[header])
+                    if self.rows is None:
+                        self.rows = [row]
+                    else:
+                        self.rows.append(row)
+            if eom:
+                self.timer.Stop()
+            else:
+                ret = next(self.mudp.recvRequestId(self.requestId))
+        if updates:
+            self.label.SetValue("%d rows (loading)"%len(self.rows))
+            self.grid.update(titles=self.headers, row_col=self.rows)
+        if eom:
+            self.label.SetValue("%d rows (done)"%len(self.rows))
 
 
 class WiWS(wx.Frame):
@@ -56,6 +107,9 @@ class WiWS(wx.Frame):
             self.Layout()
             self.Show()
             raise e
+        with open(os.path.join(cfg["hdir"],"hall_summit.json"), "r") as f:
+            j = json.load(f)
+            self.halleluAddr = (j["ip"], j["port"])
         boxSizer = wx.BoxSizer(wx.VERTICAL)
         self.panel = wx.Panel(self)
         self.cmd = None
@@ -76,6 +130,11 @@ class WiWS(wx.Frame):
         self.panel.Layout()
         self.Layout()
         self.Show()
+        self.usage = MUsage()
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(5)
+        s.bind(("", 0))
+        self.mudp = MUDP(s, clientMode=True)
 
     def on_addcmd(self, event):
         wsn = self.ws_selection.GetValue()
@@ -155,8 +214,8 @@ class WiWS(wx.Frame):
         cmd = self.ws.getCmd(outputs=qp.data)
         return self.ws.updateCmd(wsn=wsn, cmd=cmd, selected=qp.getSelected())
 
-    def ws_sample(self) -> None:
-        WiFramedGrid(title="sample", data={"titles": ["a","b"], "rows": [[1,2]]})
+    def ws_sample(self, title:str) -> None:
+        WiSampleGrid(title=title, remoteAddr=self.halleluAddr, mudp=self.mudp)
 
     def OnRowClick(self, event):
         row = event.GetRow()
@@ -203,16 +262,26 @@ class WiWS(wx.Frame):
     def main():
         parser = argparse.ArgumentParser(description="Wi")
         parser.add_argument('--dir', help="worksheet dir")
+        parser.add_argument('--hdir', help="hall dir")
         parser.add_argument('-d', '--debug', help="activate debugging", action="store_true")
         args = parser.parse_args()
         if args.dir is None:
             args.dir = "worksheets"
+        if args.hdir is None:
+            args.hdir = "halls"
         app = wx.App(0)
-        cfg = {"debug": args.debug, "wsdir": args.dir }
+        # TODO; change the iconized image.
+        # import Tkinter
+        # from Tkinter import Tk
+        # root = Tk()
+        # img = Tkinter.Image("photo", file="appicon.gif")
+        # root.tk.call('wm','iconphoto',root._w,img)
+        cfg = {"debug": args.debug, "wsdir": args.dir, "hdir": args.hdir}
         try:
             WiWS(cfg)
         except Exception:
-            pass
+            traceback.print_exc()
+            return
         app.MainLoop()
 
 

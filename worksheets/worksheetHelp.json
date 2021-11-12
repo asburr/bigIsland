@@ -58,7 +58,10 @@
         "type": "composite",
         "desc": "Loads data from a file",
         "eg": "{files: <feed> f:<feed> fstats:<feed> s:{ tshark: false csv: 1 file:{ f: <feed> oracleTable: <table> csvRowCount: 1 } }",
-        "files": {
+        "snapshot": {
+            "type": "bool", "default": false,
+            "desc": "True when file contains a complete snapshot. Internally, this adds the snapshot indication to the feed, indicating the start and end of each snapshot. From a user's perspective, a join is paused until the first snapshot is received, subsequent snapshots are received peacemeal ."
+        }, "files": {
              "type": "feedRef",
              "desc": "Input feed containing the file-names that are loaded"
         }, "feed": {
@@ -298,26 +301,92 @@
             "type": "str",
             "desc": "msdatetime.strftime() when usage was take"
         }
+    }, "_request_cancel_": {
+        "type": "composite",
+        "desc": "Cancel the request. Sent by the client api when the client cancels the request and further received content for this request is being ignored by the api.",
+        "requestId": {
+            "type": "int",
+            "desc": "The request's id"
+        }
     }, "_sample_": {
         "type": "composite",
-        "desc": "Request a N sample documents",
+        "desc": "Request N documents from a particular feed",
         "N": {
             "type": "int", "default": 100,
             "desc": "Numer of documents"
         },
         "feed": {
-            "type": "feedRef", "default": null,
-            "desc": "Name a feed to get samples from, otherwise samples are taken from all feeds"
+            "type": "feedRef",
+            "desc": "Name a feed to get samples from"
         }
     }, "_sample_response_": {
-        "type": "listComposites",
-        "desc": "Samples",
+        "type": "composites",
+        "desc": "Samples starts with the schema, each next content is a sample.",
+        "schema": {
+            "type": "any", "default": null,
+            "desc": "Feed schema"
+        }
+    }, "_stream_": {
+        "type": "composite",
+        "desc": "Request to stream a feed to a collection of jahs. An updated request, will restart the stream with the keyCols and dataCols and jahs from the latest stream reqest",
         "feed": {
+            "type": "feedRef", "default": null,
+            "desc": "Name a feed to stream"
+        },
+        "keyCols": {
+            "type": "listComposites",
+            "desc": "One or more column names that contain key. Key can be complex types such as dict and list. Key is hashed, last bits index into jahs to select a jah which receives the stream",
+            "name": {
+                "type": "str",
+                "desc": "Column name of a column that is a key"
+            },
+            "wildchar_masks": {
+                "type": "listComposites", "default": null,
+                "desc": "although Jah may have many masks per length of value, the stream command wants the first mask per length of value. this mask is applied before hashing",
+                "wildchar": {
+                    "type": "str",
+                    "desc": "A single char that is the wildchar, i.e. X"
+                }, "mask": {
+                    "type": "str",
+                    "desc": "Mask is 1 for hashable char and 0 for wildchar, i.e. 1101 matches value ABCD which is converted to the wildchar value of ABXD before hashing"
+                }
+            }
+        },
+        "dataCols": {
+            "type": "listComposites",
+            "desc": "Zero or more column names that contain data"
+        },
+        "jahs": {
+            "type": "listComposites",
+            "desc": "One or more jahs. Data is distributed to the jah based on a hash of the keyCols",
+            "jah": {
+                "type": "composites",
+                "desc": "Address of Jah to receive stream",
+                "ip": {
+                    "type": "str",
+                    "desc": "Ip address of jah"
+                }, "port": {
+                    "type": "int",
+                    "desc": "Port for jah"
+                }
+            }
+        }
+    }, "_stream_response_": {
+        "type": "composites",
+        "desc": "Confirmation of streaming",
+        "state": {
             "type": "str",
-            "desc": "Name of the feed where the sample came from"
-        }, "sample": {
+            "desc": "snapshot: this feed is a snapshot, Jah waits ; Streaming: feed is flowing; deleted: feed has been deleted"
+        }
+    }, "_stream_data_": {
+        "type": "composites",
+        "desc": "Parcel of data in the stream",
+        "data": {
             "type": "any",
-            "desc": "the sample"
+            "desc": "the data"
+        }, "snapshot": {
+            "type": "str", "default": null,
+            "desc": "snapshot indicator is either begin or end, and signifies new data at the begining of a snapshot and the last data at the end of the snapshot. Old data, that was not resent, should be purged at the end of the snapshot."
         }
     }
 }
