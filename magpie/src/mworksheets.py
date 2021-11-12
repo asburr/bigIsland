@@ -25,7 +25,7 @@ class MWorkSheetException(Exception):
 
 
 class MWorksheets:
-        def __init__(self, dir: str):
+    def __init__(self, dir: str):
         self.verify_handlers = {
             "composite": self._verifyComposite,
             "listComposites": self._verifyListComposite,
