@@ -136,7 +136,7 @@ class QueryParams(wx.Frame):
                 self.params[name] = NamedButton(self.spanel, "DELETE", name)
                 self.params[name].Bind(wx.EVT_BUTTON, self.on_deleteButton)
             elif typ == "samplebutton":
-                self.params[name] = NamedButton(self.spanel, "SAMPLE", name)
+                self.params[name] = NamedButton(self.spanel, "SAMPLE", value)
                 self.params[name].Bind(wx.EVT_BUTTON, self.on_sampleButton)
             elif typ == "int":
                 proportion = 1
@@ -308,7 +308,8 @@ class QueryParams(wx.Frame):
     def on_sampleButton(self, event) -> None:
         if self.sample is None:
             return
-        self.sample()
+        cb = event.GetEventObject()
+        self.sample(cb.name)
         
     def on_deleteButton(self, event) -> None:
         b = event.GetEventObject()
