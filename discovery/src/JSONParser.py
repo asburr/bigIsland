@@ -22,47 +22,43 @@ from discovery.src.parser import Parser
 from magpie.src.mistype import MIsType
 
 
-# Gather stats for a python data structure of list, dict.
-# While gathering stats, the type of leaf values is determined and
-# inserted into the structure.
+# Create a schema for a python data structure that can be a flat dict,
+# or nexted lists and dicts.
+# while building the schema, the type of values is determined and
+# inserted into the schema
 # {"host": "www.hello.world.com"}
-# Becomes:
-# {"host": {"v": "www.hello.world.com", "t": "domain"}
-
-class JSONStats:
-    """
-    stats = {
-        "<fieldname>": {
-            "c": <occ>,
-            "e": <example>,
-            "dt": {
-                "<datatype>": {
-                    "c": <occ>,
-                    "e": <example>
-               }
-            },
-            "v": {
-                "<value>": {
-                    "c": <occ>
-                }
-            }
-        }
-    }
-    values = {
-        "<fieldname>": {}
-    }
-    """
+# Generates the schema:
+# {"host": {'c': 1, 'e': 123, 'dt': {'': {'c': 1, 'e': 123}}, 'v': {}}
+# The format's full definition:
+#        "<fieldname>": {
+#            "c": <occ counter>,
+#            "e": <example>,
+#            "dt": {
+#                "<datatype>": {
+#                    "c": <occ counter>,
+#                    "e": <example>
+#               }
+#            },
+#            "v": {
+#                "<value>": {
+#                    "c": <occ counter>
+#                }
+#            }
+#        }
+# Note that "v" is populated when values are being tracked by the schema,
+# this is activated by calls to addValues(), otherwise it's always empty.
+class JSONSchema:
     def __init__(self):
         self.stats = {}
         self.values = set()
 
-    def gatherStats(self, label: str, obj: any) -> None:
+    def gather(self, label: str, obj: any) -> None:
         if isinstance(obj, dict):
             for k, v in obj.items():
-                self.gatherStats(label+"->"+k, v)
+                self.gather(label+" "+k, v)
         elif isinstance(obj, list):
             for v in obj:
-                self.gatherStats(label+"->item", v)
+                self.gather(label+" __repeated_item__", v)
         else:
             if label not in self.stats:
                 self.stats[label] = {
@@ -90,7 +86,7 @@ class JSONStats:
                     d = dv[obj]
                     d["c"] += 1
 
-    def merge(self, other: "JSONStats") -> None:
+    def merge(self, other: "JSONSchema") -> None:
         for k, v in other.stats.items():
             if k not in self.stats:
                 self.stats[k] = v
@@ -114,10 +110,16 @@ class JSONStats:
         for valueFieldName in valueFieldNames:
             self.values.add(valueFieldName)
 
+    def __str__(self):
+        s="Stats:\n"
+        for k, v in self.stats.items():
+            s+=k+" = "+str(v)+"\n"
+        return s
+
 
 class JSONParser(Parser):
     def __init__(self):
-        self.stats = JSONStats()
+        self.stats = JSONSchema()
         self.j = None
         self.valueLabels = {}
         self.truncs = {}
@@ -195,13 +197,15 @@ class JSONParser(Parser):
         else:
             self.r = value
 
+    # Read objects from a file into a list, return list.
     def parse(self, file: str) -> list:
         r = []
         for j in self.toJSON({"filename": file}):
-            self.stats.gatherStats("", j)
+            self.stats.gather("", j)
             r.append(j)
         return r
 
+    # Read objects from a file, yield each object.
     def toJSON(self, param: dict) -> any:
         self.c = self.j = None
         self.key = None
@@ -210,7 +214,8 @@ class JSONParser(Parser):
             param["file"] = f
             for j in self.toJSON_FD(param):
                 yield j
-            
+    
+    # Read objects from file descriptor, yield each object.
     def toJSON_FD(self, param: dict) -> any:
         p = ijson.basic_parse(param["file"])
         offset = param["offset"]
@@ -230,15 +235,15 @@ class JSONParser(Parser):
                     print("YIELD "+ str(self.r))
                 self.renameLabels = []
                 self.r = self._walk(self.r)
-                self.stats.gatherStats("", self.r)
+                self.stats.gather("", self.r)
                 yield self.r
                 self.r = None
         if self.c:
             yield self.c
             self.c = None
 
-    def getStats(self) -> JSONStats:
-        self.stats.gatherStats("", self.j)
+    def getStats(self) -> JSONSchema:
+        self.stats.gather("", self.j)
         return self.stats
 
     # Add a label whose values will be tracked by the stats.
@@ -414,7 +419,8 @@ class JSONParser(Parser):
                     raise Exception("http param " + field + " is " +
                                     str(type(v)))
 
-    def diff(self, label: str, obj: any, obj2: any) -> None:
+    # Compare two structure, return True when differences.
+    def diff(self, label: str, obj: any, obj2: any) -> bool:
         if type(obj) != type(obj2):
             print("*** Different types " + label + " " + type(obj) + " " + type(obj2))
             return False
@@ -446,6 +452,9 @@ class JSONParser(Parser):
                 return False
         return True
 
+    # Walk an object and clean it up. Remove fields that are
+    # to be ignored. Decode http fields. Truncs fields.
+    # Value labels.
     def _walk(self, obj: any) -> any:
         if isinstance(obj, dict):
             obj = self._wiresharkDict(obj)
@@ -608,6 +617,7 @@ class JSONParser(Parser):
                     print("PASS")
         else:
             print(j)
+        print(p.stats)
         if False:
             print(p.getStats().stats)
             p2.stats.merge(p.stats)
