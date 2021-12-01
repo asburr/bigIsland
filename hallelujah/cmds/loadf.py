@@ -21,6 +21,7 @@ from discovery.src.CSVParser import CSVParser
 
 class Loadf(Cmd):
     def __init__(self, cmd: dict):
+        super().__init__()
         self.fileHandlers = {
             ".xls": self.__readxls,
             ".__xls__": self.__read__xls__,

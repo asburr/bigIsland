@@ -155,6 +155,7 @@ class ProcessFile():
 # the in memory cache is updated.
 class Files(Cmd):
     def __init__(self, cmd: dict):
+        super().__init__()
         self.path=cmd["path"]["path"]
         self.readonly=cmd["path"].get("readonly",self.path)
         self.depth=cmd["path"]["depth"]
@@ -172,6 +173,7 @@ class Files(Cmd):
         self.cntProcPath = self.readonly
         self.coupled = self.path == self.readonly
         self.cntDepth = self.depth
+        self.debug = False
 
     def setPath(self,path:str) -> None:
         if not path.startswith(self.path):
@@ -180,7 +182,9 @@ class Files(Cmd):
         if self.coupled:
             self.cntProcPath = path
         else:
-            self.cntProcPath = os.path.join(self.readonly,path[len(self.path):])
+            # path.join returns 2nd param when it starts with a slash(/),
+            # so +1 is needed.
+            self.cntProcPath = os.path.join(self.readonly,path[len(self.path)+1:])
         self.cntDepth = self.pathDepth(path) - self.depth
 
     def srtPath(self) -> None:
@@ -194,19 +198,21 @@ class Files(Cmd):
         if self.coupled:
             self.cntProcPath = de.path
         else:
-            self.cntProcPath = os.path.join(self.readonly,de.path[len(self.path):])
+            # path.join returns 2nd param when it starts with a slash(/),
+            # so +1 is needed.
+            self.cntProcPath = os.path.join(self.readonly,de.path[len(self.path)+1:])
         self.cntPath = de.path
-        self.depth -= 1
+        self.cntDepth -= 1
 
     def prvPath(self) -> bool:
         if self.cntDepth > self.depth:
-            raise False
+            raise Exception("depth too large "+str(self.cntDepth))
         self.cntPath = os.path.dirname(self.cntPath)
         if self.coupled:
             self.cntProcPath = self.cntPath
         else:
             self.cntProcPath = os.path.dirname(self.cntProcPath)
-        self.depth += 1
+        self.cntDepth += 1
 
     def __str__(self) -> str:
         return "path=%s readonly=%s depth=%d feeds=%s" % (
@@ -279,20 +285,19 @@ class Files(Cmd):
         else:
             self.maintenanceDirScan()
 
-    def removeNest(self, dir: str) -> None:
+    @classmethod
+    def removeNest(cls, dir: str) -> None:
         for de in os.scandir(dir):
             if de.is_dir():
-                self.removeNest(de.path)
+                cls.removeNest(de.path)
             else:
                 os.remove(de.path)
-        os.remove(dir)
+        os.rmdir(dir)
 
     def addFileToFeed(self, path: str, mtime: int) -> None:
-        print("addFileToFeed "+path)
         for feed in self.feeds:
             o = feed["order"]
             if feed["regex"].match(path):
-                print(str(mtime)+" "+path)
                 o.setdefault(mtime,set()).add(path)
                 return True
         return False
@@ -300,7 +305,7 @@ class Files(Cmd):
     # Read files into memory, process subdir upto self.depth.
     # Keep track of path's modified timestamp.
     def initialDirScan(self) -> None:
-        print("initialDirScan %s %s %d" % (self.cntProcPath,self.cntPath,self.cntDepth))
+        # print("initialDirScan %s %s %d" % (self.cntProcPath,self.cntPath,self.cntDepth))
         if not os.path.isdir(self.cntPath):
             raise Exception("No such directory "+self.cntPath)
         if not os.path.isdir(self.cntProcPath):
@@ -325,19 +330,18 @@ class Files(Cmd):
             elif de.is_dir() and self.cntDepth > 0:
                 self.nxtPath(de)
                 self.initialDirScan()
-                self.prvPath(de)
+                self.prvPath()
         if not self.coupled:
             self.cleanupProcessPath(processfiles)
 
     # Scan processpath, cleanup processfile using factory(). 
-    def cleanupProcessPath(self,
-       processpath: str, filepath: str, processfiles: set)  -> None:
-        for de in os.scandir(processpath):
+    def cleanupProcessPath(self, processfiles: set)  -> None:
+        for de in os.scandir(self.cntProcPath):
             if de.path not in processfiles:
-                ProcessFile.factory(de,filepath)
+                ProcessFile.factory(de,self.cntPath)
             if de.is_dir():
-                if not os.path.isdir(filepath):
-                    self.recursiveRemove(os.path.join(processpath,de.name))
+                if not os.path.isdir(self.cntPath):
+                    self.recursiveRemove(os.path.join(self.cntProcPath,de.name))
 
     # No os.path.depth()?
     def pathDepth(self, path: str) -> int:
@@ -351,7 +355,7 @@ class Files(Cmd):
     # of the files in the directory. This is accomplished by looking through
     # the feeds, the mtimes in each feed, and purge when the dirpath is in
     # the filepath.
-    def purgeCacheForModifiedDir(self, dirpath: str) -> None:
+    def purgeCacheForModifiedDir(self) -> None:
         for feed in self.feeds:
             o = feed["order"]
             newo = {}
@@ -359,13 +363,13 @@ class Files(Cmd):
                 # Dont rebuild the set unless it is needed.
                 rebuild = False
                 for path in l:
-                    if path.startswith(dirpath):
+                    if path.startswith(self.cntPath):
                         rebuild = True
                         break
                 if rebuild:
                     newl = set()
                     for path in l:
-                        if not path.startswith(dirpath):
+                        if not path.startswith(self.cntPath):
                             newl.add(path)
                     if len(newl) > 0:
                         newo[mtime] = newl
@@ -379,18 +383,19 @@ class Files(Cmd):
     # resync the processFiles too. Also, run the initialDirScan for any new
     # subdirs.
     def maintenanceDirScan(self) -> None:
-        print("maintenanceDirScan")
         path_mtimes = self.path_mtimes
         self.path_mtimes = {}
         
         for filepath, mtime in path_mtimes.items():
-            current_mtime = os.path.getmtime(filepath)
-            print("path="+filepath+" mtime="+str(current_mtime))
+            try:
+                current_mtime = os.path.getmtime(filepath)
+            except FileNotFoundError:  # Directory removed!
+                continue
             if mtime != current_mtime: # Directory has changed.
-                print("dir changed "+filepath)
-                processpath = self.getProcessPath(filepath)
-                self.cleanupProcessPath(processpath,filepath,set())
-                self.purgeCacheForModifiedDir(filepath)
+                # print("dir changed "+filepath)
+                self.setPath(filepath)
+                self.cleanupProcessPath(set())
+                self.purgeCacheForModifiedDir()
                 self.path_mtimes[filepath] = current_mtime
                 for de in os.scandir(filepath):
                     if de.is_file():
@@ -399,12 +404,34 @@ class Files(Cmd):
                           and de.path not in path_mtimes
                           and self.pathDepth(de.path) <= self.depth
                     ):
-                        self.setPath(filepath)
+                        self.nxtPath(de)
                         self.initialDirScan()
         tmp = self.path_mtimes
         self.path_mtimes = path_mtimes
         for k,v in tmp.items():
             self.path_mtimes[k] = v
+
+    @staticmethod
+    def runTestcase(i:int, tc: list) -> bool:
+        if tc[0] != i:
+            print(str(i)+" End of testcases for this cycle")
+            return False
+        print(str(i)+" "+str(tc))
+        if tc[1] == "mkdir":
+            os.mkdir(tc[2])
+        elif tc[1] == "rmdir":
+            os.rmdir(tc[2])
+        elif tc[1] == "purgeDir":
+            if os.path.isdir(tc[2]):
+                Files.removeNest(tc[2])
+        elif tc[1] == "touch":
+            with open(tc[2],"w"):
+                pass
+        elif tc[1] == "rm":
+            os.remove(tc[2])
+        else:
+            raise Exception("Unexpected cmd #"+str(i)+" "+str(tc[1]))
+        return True
 
     @staticmethod
     def main():
@@ -418,26 +445,45 @@ class Files(Cmd):
         cmd = {
         "root": "test",
         "path": {
-            "path": "test/Hallelulajah/pcap",
+            "path": "test/filestesting_tmp",
             "depth": 1,
-            "readonly": "test/Hallelulajah/pcap_processed",
+            "readonly": "test/filestesting_tmp_PF",
             "feeds": [
                 {"feed": "test.pcap", "regex": ".*\\.pcap"},
                 {"feed": "test.new", "regex": ".*"}
             ]
         }
         }
+        testcases = [
+            [-1, "purgeDir", "test/filestesting_tmp" ],
+            [0, "mkdir", "test/filestesting_tmp" ],
+            [1, "touch", "test/filestesting_tmp/test1.pcap" ],
+            [1, "touch", "test/filestesting_tmp/test1.tmp" ],
+            [2, "touch", "test/filestesting_tmp/test2.pcap" ],
+            [2, "touch", "test/filestesting_tmp/test2.tmp" ],
+            [3, "touch", "test/filestesting_tmp/test3.pcap" ],
+            [3, "touch", "test/filestesting_tmp/test3.tmp" ],
+            [4, "rm", "test/filestesting_tmp/test1.pcap" ],
+            [4, "rm", "test/filestesting_tmp/test1.tmp" ],
+            [4, "rm", "test/filestesting_tmp/test3.pcap" ],
+            [4, "rm", "test/filestesting_tmp/test3.tmp" ],
+            [5, "rm", "test/filestesting_tmp/test2.tmp" ],
+            [5, "rm", "test/filestesting_tmp/test2.pcap" ],
+            [6, "rmdir", "test/filestesting_tmp" ],
+            [-1]
+        ]
+        tc_i = 0
+        while Files.runTestcase(-1,testcases[tc_i]):
+            tc_i += 1
         files = Files(cmd)
-        print(files)
         for i in range(10):
-            print(i)
+            while Files.runTestcase(i,testcases[tc_i]):
+                tc_i += 1
             files.execute()
+            print("SAMPLE:")
             for (b,d) in files.sample(feedName=None,n=10):
-                print("yield")
-                print(b)
-                print(d)
-            print(files)
-            time.sleep(3)
+                print(str(b)+" "+str(d))
+            time.sleep(0.5)
         
 
 if __name__ == "__main__":
