@@ -17,13 +17,6 @@
 # socket recv buffer does not overflow. It queues content in memory.
 # A MUDP object is created for each socket, all threads send and receive on
 # this socket using the same MUDP instance.
-# The API operates in two modes
-# =============================
-# Client mode stores the Response against only the Request Id. Server mode
-# stores Responses against both the IP Address and
-# the Request Id. This is because the Client receives Response messages from
-# different database nodes for the same request id, and the Server receives
-# Requests from different clients.
 # UDP loss is detected.
 # =====================
 # MUDP can be configured (skipBad=True) to recovered from
@@ -57,6 +50,51 @@ import threading
 from time import sleep
 import random
 import time
+import copy
+
+
+# MUDPKey : msgs can be sent in chunks, partial msg are keyed by ip, port, and rid.
+class MUDPKey():
+
+    requestId: int = int(random.random()) & 0xffff
+    def __init__(self, addr: (str, int), requestId: int=-1):
+        if requestId == -1:
+            requestId = MUDPKey.requestId = (MUDPKey.requestId + 1) & 0xffff
+        self._key = addr + (requestId,)
+
+    def nextRequestId(self) -> 'MUDPKey':
+        return MUDPKey(self.getAddr())
+
+    def getIP(self) -> str:
+        return self._key[0]
+
+    def getPort(self) -> int:
+        return self._key[1]
+
+    def getAddr(self) -> (str,int):
+        return (self.getIP(), self.getPort())
+    
+    def getRequestId(self) -> int:
+        return self._key[2]
+
+
+    # for: if key == key2:
+    def __eq__(self, other: 'MUDPKey') -> bool:
+        if other is None:
+            return False
+        return self._key == other._key
+    
+    # for: printf(key)
+    def __str__(self) -> str:
+        return str(self._key)
+    
+    # for: hash(key)
+    def __hash__(self) -> int:
+        return hash(self._key)
+    
+    # for: copy()
+    def __copy__(self) -> 'MUDPKey':
+        return MUDPKey(self.getAddr(), self.getRequestId())
 
 
 # MUDPDecodeMsg assembles chunks into content, holds partial
@@ -201,35 +239,22 @@ class MUDPDecodeMsg():
         return self.expiration >= t
 
 
-# A dictionary of Messages being decoded. find() keys by Request Id, and is
-# for clients. get() keys by IP Address and Request Id, and is for servers.
-# All messages can expire.
+# A dictionary of Messages being received. get() keys by IP Address and
+# Request Id. All messages can expire.
 class MUDPDecodeMsgs():
     def __init__(self, skipBad: bool):
         self.decodeMsgs = {}
         self.skipBad = skipBad
-    
-    # Find existing MUDPBuildMsg, or return None
-    def find(self, reqId: int) -> MUDPDecodeMsg:
-        return self.decodeMsgs.get(reqId, self.skipBad)
 
-    def addRequestId(self, requestId: int) -> None:
-        self.decodeMsgs[requestId] = MUDPDecodeMsg(requestId,self.skipBad)
-
-    def delRequestId(self, requestId: int) -> None:
-        if requestId in self.decodeMsgs:
-            del self.decodeMsgs[requestId]
-
-    # Find existing MUDPBuildMsg, or creates a new one.
-    def get(self, remoteAddr: (str, int), reqId: int) -> MUDPDecodeMsg:
-        key = remoteAddr + (reqId,)
+    # Find existing MUDPBuildMsg, or creates a new one. Key is IP, port, rid
+    def getDecodeMsg(self, key: MUDPKey) -> MUDPDecodeMsg:
         decodeMsg = self.decodeMsgs.get(key)
         if decodeMsg is None:
-            decodeMsg = MUDPDecodeMsg(reqId,self.skipBad)
+            decodeMsg = MUDPDecodeMsg(requestId=key.getRequestId(), skipBad=self.skipBad)
             self.decodeMsgs[key] = decodeMsg
         return decodeMsg
 
-    def getAllTimeout(self) -> (any, MUDPDecodeMsg):
+    def getAllTimeout(self) -> (MUDPKey, MUDPDecodeMsg):
         toDelete = []
         t = time.time()
         for k, v in self.decodeMsgs.items():
@@ -238,6 +263,10 @@ class MUDPDecodeMsgs():
                 yield k, v
         for k in toDelete:
             del self.decodeMsgs[k]
+
+    def delete(self, key: MUDPKey) -> None:
+        if key in self.decodeMsgs:
+            del self.decodeMsgs[key]
 
 
 # Reader-thead receives packets, each packet contains a chunk of a message.
@@ -251,7 +280,7 @@ class MUDPDecodeMsgs():
 # starts consuming the new content but first self.content is set back to None.
 # Using a variable in this way does not require a mutex.
 class MUDPReader(threading.Thread):
-    def __init__(self, socket: any, maxPayload: int, client: bool, skip: int, skipBad: bool, cancelUnknownRequests: bool = True):
+    def __init__(self, socket: any, maxPayload: int, skip: int, skipBad: bool, cancelUnknownRequests: bool = True):
         threading.Thread.__init__(self)
         self.cancelUnknownRequests = cancelUnknownRequests
         self.s = socket
@@ -260,18 +289,16 @@ class MUDPReader(threading.Thread):
         self.stop = False
         self.newContent = {}
         self.newContentEOM = {}
-        self.clientMode = client
-        if self.clientMode:
-            self.content = {}
-            self.contentEOM = {}
-        else:
-            self.content = None
-            self.contentEOM = None
+        self.content = None
+        self.contentEOM = None
         self.maxPayload = maxPayload
         self.decodeMsgs = MUDPDecodeMsgs(skipBad)
         self.skip = skip
         self.packetCount = 0
         self.cancelRequest = {}
+
+    def getDecodeMsg(self, key: MUDPKey) -> MUDPDecodeMsg:
+        return self.decodeMsgs.getDecodeMsg(key)
 
     def _decodeRequestId(self, txt: str) -> int:
         try:
@@ -280,64 +307,42 @@ class MUDPReader(threading.Thread):
             traceback.print_exc()
             return -1
 
-    def addRequestId(self, requestId: int) -> None:
-        # Clients are waiting for the response, and want a timeout for the requestId.
-        if self.clientMode:
-            self.decodeMsgs.addRequestId(requestId)
-            self.content[requestId] = None
+    # Remove message builder for the key.
+    # Should a message be received at a later time, the "X" command is sent
+    # to the remote end that's sending the messages, to cancel further
+    # messages. But all that needs to be done here, is to remove the builder.
+    def delete(self, key: MUDPKey) -> None:
+        self.decodeMsgs.delete(key)
+        if key in self.newContent:
+            del self.newContent[key]
+            del self.newContentEOM[key]
+        if key in self.content:
+            del self.content[key]
+            del self.contentEOM[key]
 
-    # Remove response processing for this requestId.
-    # Should a response be received, the missing response processing
-    # triggers the "X" command sent to the server that's sending the
-    # responses...see run() below for both sending the "X" command
-    # and receiving it too.
-    def delRequestId(self, requestId: int) -> None:
-        if self.clientMode:
-            self.decodeMsgs.delRequestId(requestId)
-            if requestId in self.newContent:
-                del self.newContent[requestId]
-                del self.newContentEOM[requestId]
-            if requestId in self.content:
-                del self.content[requestId]
-                del self.contentEOM[requestId]
-
-    # Publish new content to content when content is None (user has consumed
-    # the old content).
+    # Publish new content when (past) content has been consumed (i.e. content
+    # is None).
     def publish(self) -> None:
-        if self.clientMode:
-            deleteIDs = []
-            for requestId in self.newContent.keys():
-                if ( self.content[requestId] is None and
-                     len(self.newContent[requestId]) ):
-                    self.content[requestId] = self.newContent[requestId]
-                    self.contentEOM[requestId] = self.newContentEOM[requestId]
-                    if self.contentEOM[requestId][-1]:
-                        deleteIDs.append(requestId)
-                    else:
-                        self.newContentEOM[requestId] = None
-                        self.newContent[requestId] = None
-            for requestId in deleteIDs:
-                del self.newContent[requestId]
-                del self.newContentEOM[requestId]
-        else:
-            if self.content is None and len(self.newContent):
-                self.content = self.newContent
-                self.newContent = {}
-                self.contentEOM = self.newContentEOM
-                self.newContentEOM = {}
+        if self.content is None and len(self.newContent)>0:
+            self.content = self.newContent
+            self.newContent = {}
+            self.contentEOM = self.newContentEOM
+            self.newContentEOM = {}
 
+    # Expired message builders are indicated by eom(True) and content(None).
+    # Expired cancelled keys are simply removed.
     def timeout(self, t: float):
         for key, decodeMsg in self.decodeMsgs.getAllTimeout():
             self.newContentEOM.setdefault(key,[]).append(True)
             self.newContent.setdefault(key,[]).append(None)
         if len(self.cancelRequest) > 0:
             l = []
-            for addrReqId, rt in self.cancelRequest.items():
+            for key, rt in self.cancelRequest.items():
                 if rt > t:
-                    l.append(addrReqId)
-            for addrReqId in l:
-                del self.cancelRequest[addrReqId]
-        
+                    l.append(key)
+            for key in l:
+                del self.cancelRequest[key]
+
     def run(self):
         ticking = time.time() + 1
         while not self.stop:
@@ -357,7 +362,6 @@ class MUDPReader(threading.Thread):
                     self.stop = True
                     break
                 (data, ip_port) = ret
-                # print("\nRecv "+str(data)+" from "+str(ip_port)+"\n")
                 txt = data.decode('utf-8')
                 if self.skip > 0:
                     self.skip -= 1
@@ -369,23 +373,13 @@ class MUDPReader(threading.Thread):
                 if reqId == -1:
                     self.publish()
                     continue
+                key = MUDPKey(ip_port,reqId)
+                # print("\n"+str(time.time())+" Recv "+str(data)+" from "+str(key)+"\n")
                 if cmd == 'X':
-                    addrReqId = ip_port + (reqId,)
                     # Keep a cancel for 4 seconds.
-                    self.cancelRequest[addrReqId] = time.time() + 4
+                    self.cancelRequest[key] = time.time() + 4
                     continue
-                if self.clientMode:  # Collect content by requestid.
-                    decodeMsg = self.decodeMsgs.find(reqId)
-                    if decodeMsg is None:
-                        if self.cancelUnknownRequests:
-                            txt = ("%04xX" % reqId).encode('utf-8')
-                            self.s.sendto(txt.getBytes(), ip_port)
-                        self.publish()
-                        continue
-                    key = reqId
-                else:  # Server mode, collect content by endpoint and requestid
-                    decodeMsg = self.decodeMsgs.get(ip_port, reqId)
-                    key = ip_port + (reqId,)
+                decodeMsg = self.decodeMsgs.getDecodeMsg(key)
                 for content, eom in decodeMsg.decode(txt):
                     self.newContentEOM.setdefault(key,[]).append(eom)
                     self.newContent.setdefault(key,[]).append(content)
@@ -408,16 +402,9 @@ class MUDPBuildMsg():
     sensibleSpaceForContent = ContentHdrLen + (ContentHdrLen * 2)
     ChunkHdrLen = len("f11223333".encode('utf-8'))
 
-    requestId: int = int(random.random()) & 0xffff
-    @staticmethod
-    def nextId() -> int:
-        MUDPBuildMsg.requestId = (MUDPBuildMsg.requestId + 1) & 0xffff
-        return MUDPBuildMsg.requestId
-
-    def __init__(self, remoteAddr: (str, int), requestId: int):
-        self.remoteAddr = remoteAddr
+    def __init__(self, key: MUDPKey):
+        self.key = key
         self.firstContent = True
-        self.requestId = requestId
         self.buffer = "".encode('utf-8')
         self.i = 0
         self.maxPayload = -1
@@ -429,7 +416,7 @@ class MUDPBuildMsg():
         self.maxPayload = maxPayload
 
     def reset(self) -> None:
-        self.buffer = ("%04x" % self.requestId).encode('utf-8')
+        self.buffer = ("%04x" % self.key.getRequestId()).encode('utf-8')
         self.i = 4
         
     def _appendBytes(self, b: bytes) -> None:
@@ -459,9 +446,9 @@ class MUDPBuildMsg():
         self.reset()
         return b
     
-    def getRemoteAddr(self) -> (str, int):
-        return self.remoteAddr
-
+    def getKey(self) -> MUDPKey:
+        return self.key
+    
     # Add content to msg. Return bytes to send when msg is full or eom.
     def addContent(self, content: str, eom: bool) -> bytes:
         if self.firstContent:  # First content, use O and B.
@@ -489,7 +476,7 @@ class MUDPBuildMsg():
             self._appendStr("o%02x%04x"%(self.chunkId, contentLen))
             self._appendBytes(b)
             if eom:
-                self.requestId = MUDPBuildMsg.nextId()
+                self.key = self.key.nextRequestId()
             if eom or not self.hasSpaceForMoreContent():
                 yield self.getBytes()
                 self.reset()
@@ -520,7 +507,7 @@ class MUDPBuildMsg():
             yield self.getBytes()
             remainingContentLen = contentLen - contentIdx
             if eom and remainingContentLen == 0:
-                self.requestId = MUDPBuildMsg.nextId()
+                self.key = self.key.nextRequestId()
             self.reset()
 
 
@@ -544,8 +531,7 @@ class MUDP:
 
     def __init__(self,
                  socket: any,
-                 clientMode: bool, # Client 
-                 skipBad: bool, # 
+                 skipBad: bool, # Ignore bad chunk (True), or fail all chunks when one is bad (False).
                  skip: int = 0,
                  maxPayload: int=65527):
         self.maxPayload = maxPayload
@@ -557,51 +543,63 @@ class MUDP:
                 +" smallest="+str(MUDPBuildMsg.sensibleSpaceForContent))
 
         self.s = socket
-        self.reader = MUDPReader(socket,maxPayload,clientMode,skip,skipBad)
+        self.reader = MUDPReader(socket,maxPayload,skip,skipBad)
         self.reader.start()
         self.stop = False
         self.slept = 0
-        self.lastRequestId = -1
+        self.lastKey = None
 
     def shutdown(self):
         self.stop = True
         self.reader.stop = True
         self.reader.join()
 
-    def send(self, content: str, eom: bool, msg: MUDPBuildMsg) -> int:
+    def _send(self, content: str, eom: bool, msg: MUDPBuildMsg) -> MUDPKey:
         sent = False
-        requestId = msg.requestId
+        key = msg.getKey()
         msg.setMaxPayload(self.maxPayload)
         if eom:
-            if requestId == self.lastRequestId:
-                raise Exception("Multiple msg using the same requestId "+str(requestId))
-            self.lastRequestId = requestId
+            if key == self.lastKey:  # Sanity check!
+                raise Exception("Multiple send using the same requestId "+str(key))
+            self.lastKey = copy.copy(key)
         for b in msg.addContent(content,eom):
             # print("sent (content) "+str(len(b))+":"+str(b)+" to "+str(msg.getRemoteAddr()))
             sent = True
-            self.s.sendto(b, msg.getRemoteAddr())
+            self.s.sendto(b, msg.getKey().getAddr())
         if eom and msg.hasContent():
             b = msg.getBytes()
             # print("sent (eom) "+str(len(b))+":"+b+" to "+str(msg.getRemoteAddr()))
             sent = True
-            self.s.sendto(b, msg.getRemoteAddr())
+            self.s.sendto(b, msg.getKey().getAddr())
         if sent:
-            self.reader.addRequestId(requestId)
-            return requestId
-        return -1
+            return key
+        else:
+            return None
+
+    def sendRequest(self, content: str, eom: bool, msg: MUDPBuildMsg) -> MUDPKey:
+        key = msg.getKey()
+        # Ask reader thread to create a response receiver.
+        self.reader.getDecodeMsg(key)   
+        k = self._send(content, eom, msg)
+        if k is None: # Failed to send request!
+            # Delete the receiver.
+            self.reader.delete(key)
+        else:
+            if k != key:
+                raise Exception("Insane "+str(k)+" "+str(key))
+        return k
+
+    def sendResponse(self, content: str, eom: bool, msg: MUDPBuildMsg) -> None:
+        self._send(content, eom, msg)
 
     # Cancel the rest of the content for this response.
-    def cancelRequestId(self, requestId: int) -> None:
-        if not self.reader.clientMode:
-            raise Exception("Server should not be cancelling requests")
-        self.reader.delRequestId(requestId)
+    def cancelRequest(self, key: MUDPKey) -> None:
+        self.reader.delete(key)
 
     # Return ((ip:str, port:int, requestId:int), .content:str, eom:bool)
     # When an error occcurs, and skipBad is False, content=None
     # and eom=True, and the request is cancelled.
-    def recv(self) -> ((str, int, int), str, bool):
-        if self.reader.clientMode:
-            raise Exception("Client should call recvRequestId")
+    def recv(self) -> (MUDPKey, str, bool):
         countDown = 30
         while countDown > 0:
             self.reader.publish()
@@ -624,25 +622,24 @@ class MUDP:
                     eom= eomlst[i]
                     if eom and txt is None:
                         # Unrecoverable error, shutdown the request.
-                        self.cancelRequestId(key[2])
+                        self.cancelRequestId(key)
                         yield key, None, True
                         return
                     yield key, txt, eomlst[i]
 
-    # Called by Server when responding to a request to see if the user
-    # has cancelled the request, and whether the response is needed.
-    def cancelledRequestId(self, remoteAddrReqId: (str, int, int)) -> bool:
-        if self.reader.clientMode:
-            raise Exception("Server should call cancelled")
-        return (remoteAddrReqId in self.reader.cancelRequest)
+    # Before responding to a request, check that the user
+    # has not cancelled the request, in which case do not bother.
+    def cancelledRequest(self, key: MUDPKey) -> bool:
+        return (key in self.reader.cancelRequest)
 
-    # Get responses.
-    def recvRequestId(self, requestId: int, wait:float=0.0) -> (str, bool):
-        if not self.reader.clientMode:
-            raise Exception("Server should call recv")
+    # Wait for the response to a specific request.
+    def recvResponse(self, key: MUDPKey, wait:float=0.0) -> (str, bool):
         countDown = 30
         while countDown > 0:
-            l = self.reader.content.get(requestId)
+            if self.reader.content is not None:
+                l = self.reader.content.get(key)
+            else:
+                l = None
             if l is None:
                 if wait > 0.0:
                     countDown -= 1
@@ -652,16 +649,16 @@ class MUDP:
                 else:
                     return
             countDown = 10
-            eoml = self.reader.contentEOM.get(requestId)
+            eoml = self.reader.contentEOM.get(key)
             eom = False
             for i, txt in enumerate(l):
                 yield txt, eoml[i]
             if eom:
-                del self.reader.contentEOM[requestId]
-                del self.reader.content[requestId]
+                del self.reader.contentEOM[key]
+                del self.reader.content[key]
             else:
-                self.reader.contentEOM[requestId] = None
-                self.reader.content[requestId] = None
+                self.reader.contentEOM[key] = None
+                self.reader.content[key] = None
 
     # Runs the testcases found in the list. The List is tuples of content and
     # a boolean value. True means last content for the message, False
@@ -683,29 +680,29 @@ class MUDP:
         serverS.bind((ip, 0))
         serverAddr = (ip,serverS.getsockname()[1])
 
-        client = MUDP(clientS, clientMode=True, skip=0, skipBad=skipBad, maxPayload=maxPayload)
-        print(str(clientS.getsockname())+" > "+str(serverAddr))
-        server = MUDP(serverS, clientMode=False, skip=skip, skipBad=skipBad, maxPayload=maxPayload)
-        print(str(serverS.getsockname())+" > "+str(clientAddr))
+        client = MUDP(clientS, skip=0, skipBad=skipBad, maxPayload=maxPayload)
+        server = MUDP(serverS, skip=skip, skipBad=skipBad, maxPayload=maxPayload)
+        print("Client "+str(clientS.getsockname())+" > Server "+str(serverS.getsockname()))
 
-        requestIds = []
+        serverKeys = []
         client_timestamps = []
         roundtrip_timestamps = []
-        msg = MUDPBuildMsg(
-                remoteAddr=serverAddr,
-                requestId=MUDPBuildMsg.nextId())
+        key = MUDPKey(serverAddr)
+        msg = MUDPBuildMsg(key)
+        
         # Send all the content from the List.
         # Grab the time of sending each content, for measuring content latency.
         # Grab the time of sending each last content, for measuring round trip latency.
         for txt, eom in l:
             client_timestamps.append(time.time())
-            requestId = client.send(txt, eom, msg)
-            print("Client sending " + txt + " eom=" + str(eom) + " id="+str(requestId))
+            print("Client sending " + txt + " eom=" + str(eom) + " key="+str(msg.getKey()))
+            key = client.sendRequest(txt, eom, msg)
             if eom:
                 roundtrip_timestamps.append(time.time())
-                requestIds.append(requestId)
         serverI = 0
-        for (ip, port, requestId), txt, eom in server.recv():
+        for key, txt, eom in server.recv():
+            if serverI >= len(l):
+                raise Exception("End of test cases and received from "+str(key)+" content "+str(txt)+" "+str(eom))
             finish = time.time()
             expectedTxt, expectedEOM = l[serverI]
             serverI += 1
@@ -730,7 +727,7 @@ class MUDP:
                 failed = True
             else:
                 print(" PASS ", end="")
-            print(" Server receiving \""+txt+"\" from="+str(ip)+":"+str(port)+" id="+str(requestId)+ " eom="+str(eom))
+            print(" Server receiving \""+txt+"\" from="+str(key)+" eom="+str(eom))
             if failed:
                 print(server.reader.content)
                 print(server.reader.contentEOM)
@@ -738,24 +735,23 @@ class MUDP:
                 print(server.reader.newContentEOM)
                 raise Exception("STOPPING due to failure")
             if eom:
-                smsg = MUDPBuildMsg(
-                        remoteAddr=(ip,port),
-                        requestId=requestId)
-                s = "Ack to "+str(requestId)
-                print("Server Sending "+s)
-                server.send(s, True, smsg)
-        for requestId in requestIds:
-            print("Client waiting for Ack to "+str(requestId))
-            eom = False
-            while not eom:
-                for txt, eom in client.recvRequestId(requestId):
-                    finish = time.time()
-                    ts=finish-roundtrip_timestamps[-1]
-                    del roundtrip_timestamps[-1]
-                    if txt is None:
-                        print("%.3f"%ts+" Client expired id="+str(requestId)+" eom="+str(eom))
-                    else:
-                        print("%.3f"%ts+" Client receiving \""+str(txt)+"\" id="+str(requestId)+" eom="+str(eom))
+                # Respond to client with the same requestId.
+                serverKeys.append(key)
+                key = MUDPKey(addr=clientAddr, requestId=key.getRequestId())
+                smsg = MUDPBuildMsg(key)
+                s = "Ack to "+str(key)
+                print("Server responding "+s)
+                server.sendResponse(s, True, smsg)
+        for key in serverKeys:
+            print("Client waiting for Ack from "+str(key))
+            for txt, eom in client.recvResponse(key=key):
+                finish = time.time()
+                ts=finish-roundtrip_timestamps[-1]
+                del roundtrip_timestamps[-1]
+                if txt is None:
+                    print("%.3f"%ts+" Client expired id="+str(key)+" eom="+str(eom))
+                else:
+                    print("%.3f"%ts+" Client receiving \""+str(txt)+"\" id="+str(key)+" eom="+str(eom))
         print("Slept count client=%.5f"%client.slept+" server=%.5f"%server.slept)
         client.shutdown()
         recvPacketCount = server.reader.packetCount
