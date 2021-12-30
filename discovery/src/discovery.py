@@ -252,6 +252,8 @@ class SchemaDiscovery:
     # Human readable formatted representation.
     def dumps(self) -> str:
         # return json.dumps(self.r, indent=4)
+        if len(self.r) == 0:
+            return ""
         return self._dumps(self.r, "")
 
     # Machine readable formatted representation.
