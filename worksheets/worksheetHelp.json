@@ -3,7 +3,7 @@
     "desc": "Hallelujah commands",
     "files": {
         "type": "composite",
-        "desc": "outputs fully qualified file names of not (ever) previously processed files.",
+        "desc": "FILES generates a process-file for a previously unprocessed file.\nA process-file has the name '.process_<filename>', and the format:\n{\n'uuid': str, # Unique ID for this process-file\n'path': str, # Full path to the file that is to be processed.\n'found': int, # Timestamp of when process-file was first created.\n'processing': int, # Timestamp set by FILE when sending path to a command, and also updated by command while processing.\n'processed': int # Timestamp when processing is done and complete.\n}.\nIn the configuration, a regex is used to associated a file with a feed. process-file is created in the same directory as the file being processed. Except, when the directory is read-only, in this case the configuration has a reference to a writable file system (see 'readonly') and that is where the process-file is created.\n Commands that consume the process-file shall also process the contents of the associated file that is found at the 'path'.  While the command is processing the contents of the file, it is periodically updating process-file with the current timesamp in the 'processing' field.\nPeriodically, FILES checks for hung processing. A hung process is when the 'processing' timestamp is more than 10 minutes old. It is assumed that hung processing shall not recover, and the process-file is recreated with a new UUID. If a hung processing should recover and resume processing the file, it will find a different UUID in the process-file, at which point it shall shutdown, stop processing the file, and make no changes to the process-file.\nPeriodically FILES checks for processing that has finished. Finished is when the 'processed' field is not zero. FILES has three choices at the finish:\n1/ When read-only file sytems, the process-file continues to exist until something else removes the actual file; 2/ When archiving, the processed file is moved to the archive, and the process-file is removed; 3/ Otherwise, the processed file and process-file are erased.",
         "eg": "{p: { p:<path> d:1 ro:<path> fs:[ { f:<fileo> re:*\\.csv } ] a:{ p:<path> dateSubDir:day purge:60 diskUsage:70 onError:<path> } } }",
         "root": {
             "type": "str", "key": true,
@@ -14,6 +14,13 @@
             "path": {
                  "type": "path", "default": ".",
                  "desc": "Path to load files from. Default is current directory."
+            }, "order": {
+                 "type": "choice", "default": "mnewest",
+                 "desc": "Order of file name retrieval",
+                 "mnewest": {
+                     "type": "bool", "default": true,
+                     "desc": "Newest modified file first"
+                 }
             }, "depth": {
                 "type": "int", "default": 0,
                 "desc": "Specifies the depth of subdir searching under input dir. Values are: no subdir(0); unlimited depth(-1); or, a depth(N)"
@@ -308,41 +315,38 @@
             "type": "int",
             "desc": "The request's id"
         }
-    }, "_sample_": {
+    }, "_streamReq_": {
         "type": "composite",
-        "desc": "Request N documents from a particular feed",
-        "N": {
-            "type": "int", "default": 100,
-            "desc": "Numer of documents"
-        },
-        "feed": {
-            "type": "feedRef",
-            "desc": "Name a feed to get samples from"
-        }
-    }, "_sample_response_": {
-        "type": "composites",
-        "desc": "Samples starts with the schema, each next content is a sample.",
-        "schema": {
-            "type": "any", "default": null,
-            "desc": "Feed schema"
-        }
-    }, "_stream_": {
-        "type": "composite",
-        "desc": "Request to stream a feed to a collection of jahs. An updated request, will restart the stream with the keyCols and dataCols and jahs from the latest stream reqest",
-        "feed": {
+        "desc": "_streamReq_ is sent by the Receiver to the Hallelu to start a stream of data from the Hallelu's Jah. Same Message is forwarded to each Jah by Hallelu, to start stream processing which runs contineously building dataCfm messages so they are ready to be transmitted to the Receiver as soon as asked.",
+        "streamUuid": {
+            "type": "str",
+            "desc": "stream UUID"
+        }, "feed": {
             "type": "feedRef", "default": null,
             "desc": "Name a feed to stream"
-        },
-        "keyCols": {
-            "type": "listComposites",
-            "desc": "One or more column names that contain key. Key can be complex types such as dict and list. Key is hashed, last bits index into jahs to select a jah which receives the stream",
-            "name": {
+        }, "burst": {
+            "type": "int", "default": 1,
+            "desc": "Streams are synchronized, burst is the maximum number of documents to send before waiting for a dataCfm."
+        }, "streamType": {
+            "type": "str", "default": "parallel",
+            "choice": ["parallel", "parallelDistribution", "serial"],
+            "desc": "Parallel is a Receiver for every Jah, and data is sent in parallel between Jahs and Receivers i.e. loadf _data_ to expand. ParallelDistribution has a Receiver for every Jah and must have distribution keys, the data is sent in parallel, and to not overload a Receiver it gets data from one Jah at a time i.e. loadf _data_ to expand with a join. Serial has one Receiver, there may be many Jah but one Jah at a time is sending _data_ to the Receiver i.e. loadf to an external Receiver like a GUI."
+        }, "dataCols": {
+            "type": "listComposites", "default": null,
+            "desc": "The default is to stream all columns. Otherwise, this is a list of columns to be streamed.",
+            "fieldname": {
                 "type": "str",
-                "desc": "Column name of a column that is a key"
-            },
-            "wildchar_masks": {
+                "desc": "field name"
+            }
+        }, "distribution": {
+            "type": "listComposites", "default": null,
+            "desc": "The default is no distribution. Distribution divides the stream using the key columns. The key may be a complex type such as dict and list. The key is hashed, last bits of the hash selects the destination.",
+            "keyColumn": {
+                "type": "str",
+                "desc": "Column name"
+            }, "wildchar_masks": {
                 "type": "listComposites", "default": null,
-                "desc": "although Jah may have many masks per length of value, the stream command wants the first mask per length of value. this mask is applied before hashing",
+                "desc": "Although Jah may have many masks per length of value, the stream command wants the first mask per length of value. this mask is applied before hashing",
                 "wildchar": {
                     "type": "str",
                     "desc": "A single char that is the wildchar, i.e. X"
@@ -351,42 +355,93 @@
                     "desc": "Mask is 1 for hashable char and 0 for wildchar, i.e. 1101 matches value ABCD which is converted to the wildchar value of ABXD before hashing"
                 }
             }
-        },
-        "dataCols": {
-            "type": "listComposites",
-            "desc": "Zero or more column names that contain data"
-        },
-        "jahs": {
-            "type": "listComposites",
-            "desc": "One or more jahs. Data is distributed to the jah based on a hash of the keyCols",
-            "jah": {
-                "type": "composites",
-                "desc": "Address of Jah to receive stream",
-                "ip": {
-                    "type": "str",
-                    "desc": "Ip address of jah"
-                }, "port": {
-                    "type": "int",
-                    "desc": "Port for jah"
-                }
+        }
+    }, "_streamCfm_": {
+        "type": "composite",
+        "desc": "_streamCfm_ stop retransmit of _streamReq_. Contains the address of the Jah to be communicated with to get the stream's data. For parallel streams, there is a list of address for all jah, the receiver is expected to create a receiver for each Jah, and each receiver communicate with one of the Jah. For serial streams, there is one address entrypoint Jah. When sent from Jah, the list of jahs is not present.",
+        "state": {
+            "type": "str", "default": "success",
+            "choice": ["success", "fail"],
+            "desc": "State of stream"
+        }, "jahs": {
+            "type": "listComposites", "default": null,
+            "desc": "Jahs",
+            "ip": {
+                "type": "str",
+                "desc": "Ip address"
+            }, "port": {
+                "type": "int",
+                "desc": "Port"
             }
         }
-    }, "_stream_response_": {
-        "type": "composites",
-        "desc": "Confirmation of streaming",
-        "state": {
+    }, "_streamCanReq_": {
+        "type": "composite",
+        "desc": "_streamCan_ is sent cancel the stream. By Receiver to Hallelu; By Hallelu to Jah.",
+        "streamUuid": {
             "type": "str",
-            "desc": "snapshot: this feed is a snapshot, Jah waits ; Streaming: feed is flowing; deleted: feed has been deleted"
+            "desc": "stream UUID"
         }
-    }, "_stream_data_": {
-        "type": "composites",
-        "desc": "Parcel of data in the stream",
+    }, "_streamCanCfm_": {
+        "type": "composite",
+        "desc": "_streamAck_ stops retransmit of _streamCan_",
+        "streamUuid": {
+            "type": "str",
+            "desc": "stream UUID"
+        }
+    }, "_dataReq_": {
+        "type": "composite",
+        "desc": "_dataReq_ is sent to a Jah.",
+        "streamUuid": {
+            "type": "str",
+            "desc": "stream UUID"
+        }
+    }, "_dataCfm_": {
+        "type": "composite",
+        "desc": "_data_ from Jah to Receiver.",
         "data": {
             "type": "any",
             "desc": "the data"
-        }, "snapshot": {
-            "type": "str", "default": null,
-            "desc": "snapshot indicator is either begin or end, and signifies new data at the begining of a snapshot and the last data at the end of the snapshot. Old data, that was not resent, should be purged at the end of the snapshot."
+        }, "nxtJah": {
+            "type": "composite",
+            "desc": "Jah for next dataReq.",
+            "ip": {
+                "type": "str",
+                "desc": "Ip address"
+            }, "port": {
+                "type": "int",
+                "desc": "Port"
+            }
+        }
+    }, "_dataTimeoutReq_": {
+        "type": "composite",
+        "desc": "_dataTimeoutReq_ is sent to a Hallelu when the dataReq timeouts out to Jah.",
+        "streamUuid": {
+            "type": "str",
+            "desc": "stream UUID"
+        }, "jah": {
+            "type": "composite",
+            "desc": "Jah that did not respond to dataReq.",
+            "ip": {
+                "type": "str",
+                "desc": "Ip address"
+            }, "port": {
+                "type": "int",
+                "desc": "Port"
+            }
+        }
+    }, "_dataTimeoutCfm_": {
+        "type": "composite",
+        "desc": "_dataTimeoutCfm_ is sent back to Receiver, and indicates the replacement Jah.",
+        "nxtJah": {
+            "type": "composite",
+            "desc": "The address of the replacement Jah, may be the same Jah for temporary problems.",
+            "ip": {
+                "type": "str",
+                "desc": "Ip address"
+            }, "port": {
+                "type": "int",
+                "desc": "Port"
+            }
         }
     }
 }
