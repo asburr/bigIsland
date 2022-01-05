@@ -26,7 +26,7 @@
                 "desc": "Specifies the depth of subdir searching under input dir. Values are: no subdir(0); unlimited depth(-1); or, a depth(N)"
             }, "readonly": {
                 "type": "path", "default": null,
-                "desc": "(ro) is used when path (p) is read only. Touch-files are created to track prior processed files. (ro) is a path on a writable file system where the touch-files can be created and deleted"
+                "desc": "(readonly) is used when path (path) is read only. Touch-files are created to track prior processed files. (readonly) is a path on a writable file system where the touch-files can be created and deleted"
             }, "feeds": {
                 "type": "listComposites",
                 "feed": {

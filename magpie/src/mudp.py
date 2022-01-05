@@ -50,20 +50,27 @@ import threading
 from time import sleep
 import random
 import time
-import copy
 
 
-# MUDPKey : msgs can be sent in chunks, partial msg are keyed by ip, port, and rid.
+# MUDPKey : Msgs are keyed by ip, port, and rid.
 class MUDPKey():
 
-    requestId: int = int(random.random()) & 0xffff
+    requestId: int = int(random.random()*0xffff)
     def __init__(self, addr: (str, int), requestId: int=-1):
-        if requestId == -1:
-            requestId = MUDPKey.requestId = (MUDPKey.requestId + 1) & 0xffff
+        self.requesting = (requestId == -1)
         self._key = addr + (requestId,)
 
+    def setRequestId(self, key: 'MUDPKey'):
+        self._key = (self._key[0], self._key[1], key.getRequestId())
+
+    def isRequesting(self) -> bool:
+        return self.requesting
+
     def nextRequestId(self) -> 'MUDPKey':
-        return MUDPKey(self.getAddr())
+        if self.requesting: # Get a new RID.
+            self._key = (self._key[0], self._key[1], MUDPKey.requestId)
+            # print("MUDPKey new RID %x"%MUDPKey.requestId,flush=True)
+            MUDPKey.requestId = (MUDPKey.requestId + 1) & 0xffff
 
     def getIP(self) -> str:
         return self._key[0]
@@ -77,7 +84,6 @@ class MUDPKey():
     def getRequestId(self) -> int:
         return self._key[2]
 
-
     # for: if key == key2:
     def __eq__(self, other: 'MUDPKey') -> bool:
         if other is None:
@@ -86,7 +92,7 @@ class MUDPKey():
     
     # for: printf(key)
     def __str__(self) -> str:
-        return str(self._key)
+        return "%s,%d,%x"%self._key
     
     # for: hash(key)
     def __hash__(self) -> int:
@@ -153,7 +159,7 @@ class MUDPDecodeMsg():
     def decode(self, txt: str) -> (str, bool):
         self.timer = 10
         self.txt = txt
-        self.i = 4
+        self.i = 4  # RID decoded priorly.
         self.l = len(txt)
         if self.skippingContent:
             # Reset ids, but only for a first packet i.e. O or B.
@@ -170,6 +176,7 @@ class MUDPDecodeMsg():
             # print("Was skipping content, restarting content at: " + str(self.contentId) + "," + str(self.chunkId))
         while self._decodeRemaining() > 0:
             label = self._decodeStr(1)
+            # print("Decode label:"+label)
             if label in ["O", "B", "C", "F"]:
                 self.chunkId = 0
                 self.content = ""
@@ -200,7 +207,7 @@ class MUDPDecodeMsg():
                     contentId = self._decodeHex(2)
                     if self.contentId != contentId:
                         if self.skipBad:
-                            print("Dropping content, Bad contentId in last chunk got " + str(contentId)+" expect "+str(self.contentId))
+                            # print("Dropping content, Bad contentId in last chunk got " + str(contentId)+" expect "+str(self.contentId))
                             self.skippingContent = True
                             return
                         else:
@@ -214,11 +221,11 @@ class MUDPDecodeMsg():
                 chunkId = self._decodeHex(2)
                 if self.chunkId != chunkId:
                     if self.skipBad:
-                        print("Starting skipping Bad chunkId " + str(chunkId) + " want " + str(self.chunkId))
+                        # print("Starting skipping Bad chunkId " + str(chunkId) + " want " + str(self.chunkId))
                         self.skippingContent = True
                         return
                     else:
-                        # raise Exception("Bad chunkId " + str(chunkId) + " want " + str(self.chunkId))
+                        # print("Bad chunkId " + str(chunkId) + " want " + str(self.chunkId))
                         yield None, True
                         return
                 self.chunkId = ( self.chunkId + 1 ) & 0xff
@@ -229,7 +236,7 @@ class MUDPDecodeMsg():
                     yield self.content, self.eom
                     self.content = ""
             else:
-                if self.skipbad:
+                if self.skipBad:
                     return
                 else:
                     yield None, True
@@ -358,7 +365,7 @@ class MUDPReader(threading.Thread):
                 if ret is None:  # Socket closed.
                     self.stop = True
                     break
-                (data, ip_port) = ret
+                (data, remote_ip_port) = ret
                 txt = data.decode('utf-8')
                 if self.skip > 0:
                     self.skip -= 1
@@ -370,15 +377,15 @@ class MUDPReader(threading.Thread):
                 if reqId == -1:
                     self.publish()
                     continue
-                key = MUDPKey(ip_port,reqId)
-                # print("\n"+str(time.time())+" Recv "+str(data)+" from "+str(key)+"\n")
-                decodeMsg = self.decodeMsgs.getDecodeMsg(key)
+                remotekey = MUDPKey(remote_ip_port,reqId)
+                # print(str(time.time())+" Recv "+str(data)+" from "+str(remotekey)+"\n",,flush=True)
+                decodeMsg = self.decodeMsgs.getDecodeMsg(remotekey)
                 for content, eom in decodeMsg.decode(txt):
                     if eom:
                         # Don't need decodeMsg beyond end of message.
-                        self.decodeMsgs.delete(key)
-                    self.newContentEOM.setdefault(key,[]).append(eom)
-                    self.newContent.setdefault(key,[]).append(content)
+                        self.decodeMsgs.delete(remotekey)
+                    self.newContentEOM.setdefault(remotekey,[]).append(eom)
+                    self.newContent.setdefault(remotekey,[]).append(content)
                 self.publish()
             except Exception as e:
                 traceback.print_exc()
@@ -398,15 +405,18 @@ class MUDPBuildMsg():
     sensibleSpaceForContent = ContentHdrLen + (ContentHdrLen * 2)
     ChunkHdrLen = len("f11223333".encode('utf-8'))
 
-    def __init__(self, key: MUDPKey):
-        self.key = key
+    def __init__(self, remotekey: MUDPKey):
+        self.remotekey = remotekey
         self.firstContent = True
         self.buffer = "".encode('utf-8')
         self.i = 0
         self.maxPayload = -1
         self.contentId = 0
         self.chunkId = 0
-        self.reset()
+
+    def _reset(self) -> None:
+        self.buffer = "".encode('utf-8')
+        self.i = 0
 
     def __str__(self) -> str:
         s="MUDPBuildMsg\n"
@@ -416,10 +426,6 @@ class MUDPBuildMsg():
     def setMaxPayload(self, maxPayload: int) -> None:
         self.maxPayload = maxPayload
 
-    def reset(self) -> None:
-        self.buffer = ("%04x" % self.key.getRequestId()).encode('utf-8')
-        self.i = 4
-        
     def _appendBytes(self, b: bytes) -> None:
         self.buffer += b
         self.i += len(b)
@@ -444,15 +450,19 @@ class MUDPBuildMsg():
 
     def getBytes(self) -> bytes:
         b = self.buffer
-        self.reset()
         return b
     
-    def getKey(self) -> MUDPKey:
-        return self.key
+    def getRemoteKey(self) -> MUDPKey:
+        return self.remotekey
     
     # Add content to msg. Return bytes to send when msg is full or eom.
+    # Call nextRequestId() on first content, it will get create a new id
+    # for requests; otherwise, for repsonses, use the key's requestid.
     def addContent(self, content: str, eom: bool) -> bytes:
         if self.firstContent:  # First content, use O and B.
+            self.remotekey.nextRequestId()
+            self.buffer = ("%04x" % self.remotekey.getRequestId()).encode('utf-8')
+            self.i = 4
             if eom:
                 self.firstContent = True
                 self.contentId = 0
@@ -462,6 +472,9 @@ class MUDPBuildMsg():
                 self.contentId = 0
                 self._appendStr("B%02x"%self.contentId)
         else:  # Next content, use F or C.
+            if self.i == 0:
+                self.buffer = ("%04x" % self.remotekey.getRequestId()).encode('utf-8')
+                self.i = 4
             if eom:
                 self.firstContent = True
                 self.contentId = ( self.contentId + 1 ) & 0xff
@@ -476,16 +489,17 @@ class MUDPBuildMsg():
         if self.hasRoom(contentLen + 7):
             self._appendStr("o%02x%04x"%(self.chunkId, contentLen))
             self._appendBytes(b)
-            if eom:
-                self.key = self.key.nextRequestId()
             if eom or not self.hasSpaceForMoreContent():
                 yield self.getBytes()
-                self.reset()
+                self._reset()
             return
         firstChunkId = True
         contentIdx = 0
         remainingContentLen = contentLen - contentIdx
         while remainingContentLen:
+            if self.i == 0:
+                self.buffer = ("%04x" % self.remotekey.getRequestId()).encode('utf-8')
+                self.i = 4
             r = self.room() - self.ChunkHdrLen
             if firstChunkId:
                 firstChunkId = False
@@ -507,9 +521,7 @@ class MUDPBuildMsg():
             self._appendBytes(chunk)
             yield self.getBytes()
             remainingContentLen = contentLen - contentIdx
-            if eom and remainingContentLen == 0:
-                self.key = self.key.nextRequestId()
-            self.reset()
+            self._reset()
 
 
 # See file header comments.
@@ -531,10 +543,17 @@ class MUDP:
         return ret
 
     def __init__(self,
-                 socket: any,
-                 skipBad: bool, # Ignore bad chunk (True), or fail all chunks when one is bad (False).
-                 skip: int = 0,
-                 maxPayload: int=65527):
+        socket: any,
+        # Ignore bad chunk (True), or fail all chunks when one is bad (False).
+        skipBad: bool,
+        # Testing packet loss with your application, skip(>0) to skip that packet.
+        skip: int = 0,
+        # rfc768 says UDP length is 4 bytes (65535) and UDP header
+        # is 8 bytes; 65527=65535-8 and is the default for maxPayload. But,
+        # maxPayload must be the smallest MTU value found in the network that
+        # is used by the database and the applications connecting to the db.
+        maxPayload: int=65527
+    ):
         self.maxPayload = maxPayload
         if maxPayload > 65527:
             raise Exception("maxPayload above UDP maximum "+str(maxPayload))
@@ -547,7 +566,6 @@ class MUDP:
         self.reader.start()
         self.stop = False
         self.slept = 0
-        self.lastKey = None
 
     def __str__(self) -> str:
         s="MUDP\n"
@@ -559,38 +577,24 @@ class MUDP:
         self.reader.stop = True
         self.reader.join()
 
-    def _send(self, content: str, eom: bool, msg: MUDPBuildMsg) -> MUDPKey:
+    # Return remote key
+    def send(self, content: str, eom: bool, msg: MUDPBuildMsg) -> MUDPKey:
         sent = False
-        key = msg.getKey()
+        remotekey = msg.getRemoteKey()
         msg.setMaxPayload(self.maxPayload)
-        if eom:
-            if key == self.lastKey:  # Sanity check!
-                raise Exception("Multiple send using the same requestId "+str(key))
-            self.lastKey = copy.copy(key)
         for b in msg.addContent(content,eom):
-            # print("sent (content) "+str(len(b))+":"+str(b)+" to "+str(msg.getRemoteAddr()))
+            # print("sent (content) "+str(len(b))+":"+str(b)+" to "+str(remotekey))
             sent = True
-            self.s.sendto(b, msg.getKey().getAddr())
+            self.s.sendto(b, remotekey.getAddr())
         if eom and msg.hasContent():
             b = msg.getBytes()
-            # print("sent (eom) "+str(len(b))+":"+b+" to "+str(msg.getRemoteAddr()))
+            # print("sent (eom) "+str(len(b))+":"+b+" to "+str(remotekey))
             sent = True
-            self.s.sendto(b, msg.getKey().getAddr())
+            self.s.sendto(b, remotekey.getAddr())
         if sent:
-            return key
+            return remotekey
         else:
             return None
-
-    def sendRequest(self, content: str, eom: bool, msg: MUDPBuildMsg) -> MUDPKey:
-        key = msg.getKey()
-        k = self._send(content, eom, msg)
-        if k is not None: # Failed to send request!
-            if k != key:
-                raise Exception("Insane "+str(k)+" "+str(key))
-        return k
-
-    def sendResponse(self, content: str, eom: bool, msg: MUDPBuildMsg) -> None:
-        self._send(content, eom, msg)
 
     # Return ((ip:str, port:int, requestId:int), .content:str, eom:bool)
     # When an error occcurs, and skipBad is False, content=None
@@ -612,35 +616,35 @@ class MUDP:
             self.reader.contentEOM = None
             self.reader.content = None
             countDown = 10
-            for key, lst in content.items():
-                eomlst = contentEOM[key]
+            for remotekey, lst in content.items():
+                eomlst = contentEOM[remotekey]
                 for i, txt in enumerate(lst):
                     eom= eomlst[i]
                     if eom and txt is None:
                         # Unrecoverable error, shutdown the request.
-                        yield key, None, True
+                        yield remotekey, None, True
                         return
-                    yield key, txt, eomlst[i]
+                    yield remotekey, txt, eomlst[i]
 
     # Wait for the response to a specific request.
-    # Will wait(>0.0) if needed, default is no wait(0.0) and check for new response and yield response and then reuturn.
+    # Will wait(30 x >0.0) if needed, default is no wait(0.0) and check for new response and yield response and then reuturn.
     # Will flush(True) other content, default is to flush all other responses received on other keys.
     def recvResponse(
-        self, key: MUDPKey, wait:float=0.0, flush: bool=True
+        self, remotekey: MUDPKey, wait:float=0.0, flush: bool=True
     ) -> (str, bool):
         countDown = 30
         while countDown > 0:
             if self.reader.content is not None:
-                l = self.reader.content.get(key)
-                eoml = self.reader.contentEOM.get(key)
+                l = self.reader.content.get(remotekey)
+                eoml = self.reader.contentEOM.get(remotekey)
                 # Release content rightaway, so reader can publish
                 # more while processing the recent content.
                 if flush:
                     self.reader.contentEOM = None
                     self.reader.content = None
                 else:
-                    del self.reader.contentEOM[key]
-                    del self.reader.content[key]
+                    del self.reader.contentEOM[remotekey]
+                    del self.reader.content[remotekey]
                     if len(self.reader.content)==0:
                         self.reader.contentEOM = None
                         self.reader.content = None
@@ -650,6 +654,7 @@ class MUDP:
                 if wait > 0.0:
                     countDown -= 1
                     self.slept += wait
+                    # print(str(self),flush=True)
                     sleep(wait)
                     continue
                 else:
@@ -671,12 +676,10 @@ class MUDP:
         clientS = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         clientS.settimeout(5)
         clientS.bind((ip, 0))
-        clientAddr = (ip, clientS.getsockname()[1])
 
         serverS = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         serverS.settimeout(5)
         serverS.bind((ip, 0))
-        serverAddr = (ip,serverS.getsockname()[1])
 
         client = MUDP(clientS, skip=0, skipBad=skipBad, maxPayload=maxPayload)
         server = MUDP(serverS, skip=skip, skipBad=skipBad, maxPayload=maxPayload)
@@ -685,22 +688,21 @@ class MUDP:
         serverKeys = []
         client_timestamps = []
         roundtrip_timestamps = []
-        key = MUDPKey(serverAddr)
-        msg = MUDPBuildMsg(key)
+        clientmsg = MUDPBuildMsg(MUDPKey(serverS.getsockname()))
         
         # Send all the content from the List.
         # Grab the time of sending each content, for measuring content latency.
         # Grab the time of sending each last content, for measuring round trip latency.
         for txt, eom in l:
             client_timestamps.append(time.time())
-            print("Client sending " + txt + " eom=" + str(eom) + " key="+str(msg.getKey()))
-            key = client.sendRequest(txt, eom, msg)
+            serverKey = client.send(txt, eom, clientmsg)
+            print("Client sending " + txt + " eom=" + str(eom) + " to="+str(serverKey))
             if eom:
                 roundtrip_timestamps.append(time.time())
         serverI = 0
-        for key, txt, eom in server.recv():
+        for clientkey, txt, eom in server.recv():
             if serverI >= len(l):
-                raise Exception("End of test cases and received from "+str(key)+" content "+str(txt)+" "+str(eom))
+                raise Exception("End of test cases and received from "+str(clientkey)+" content "+str(txt)+" "+str(eom))
             finish = time.time()
             expectedTxt, expectedEOM = l[serverI]
             serverI += 1
@@ -725,7 +727,7 @@ class MUDP:
                 failed = True
             else:
                 print(" PASS ", end="")
-            print(" Server receiving \""+txt+"\" from="+str(key)+" eom="+str(eom))
+            print(" Server receiving \""+txt+"\" from="+str(clientkey)+" eom="+str(eom))
             if failed:
                 print(server.reader.content)
                 print(server.reader.contentEOM)
@@ -733,32 +735,30 @@ class MUDP:
                 print(server.reader.newContentEOM)
                 raise Exception("STOPPING due to failure")
             if eom:
-                # Respond to client with the same requestId.
-                serverKeys.append(MUDPKey(serverAddr,key.getRequestId()))
-                key = MUDPKey(addr=clientAddr, requestId=key.getRequestId())
-                smsg = MUDPBuildMsg(key)
-                s = "Ack to "+str(key)
+                serverKeys.append(MUDPKey(serverS.getsockname(),clientkey.getRequestId()))
+                smsg = MUDPBuildMsg(clientkey)
+                s = "Ack to "+str(clientkey)
                 print("Server responding "+s)
-                server.sendResponse(s, True, smsg)
-        for key in serverKeys:
-            print("Client waiting for Ack from "+str(key))
+                server.send(s, True, smsg)
+        for serverkey in serverKeys:
+            print("Client waiting for Ack from "+str(serverkey))
             eom = False
             while True:
-                for txt, eom in client.recvResponse(key=key):
+                for txt, eom in client.recvResponse(remotekey=serverkey):
                     if txt is None:
-                        print("Client expired id="+str(key)+" eom="+str(eom))
+                        print("Client expired id="+str(serverkey)+" eom="+str(eom))
                     else:
                         finish = time.time()
                         ts=finish-roundtrip_timestamps[-1]
                         del roundtrip_timestamps[-1]
-                        print("%.3f"%ts+" Client receiving \""+str(txt)+"\" id="+str(key)+" eom="+str(eom))
+                        print("%.3f"%ts+" PASS Client receiving \""+str(txt)+"\" id="+str(serverkey)+" eom="+str(eom))
                     if eom:
                         break
                 if eom:
                     break
                 else:
                     sleep(0.5)
-                    print("Client slept (0.5) waiting for Ack from "+str(key))
+                    print("Client slept (0.5) waiting for Ack from "+str(serverkey))
                     print(str(client))
         print("Slept count client=%.5f"%client.slept+" server=%.5f"%server.slept)
         client.shutdown()

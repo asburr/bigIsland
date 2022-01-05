@@ -10,13 +10,16 @@
 # 
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
 #
-from cmd import Cmd
+from hallelujah.cmds.cmd import Cmd
 import os.path
 import json
 import re
 import time
 import uuid
 import posix
+import traceback
+
+
 
 # ProcessFile exists while a file is being processed.
 # The name of the ProcessFile includes the name of the file being
@@ -26,35 +29,25 @@ class ProcessFile():
     processFilePrefix = ".processfile_"
     processFilePrefixLen = len(".processfile_")
 
-    @staticmethod
-    def factory(de: posix.DirEntry, filePath: str) -> (bool, "ProcessFile"):
-        if not de.name.startswith(ProcessFile.processFilePrefix):
-            return False, None
-        if len(de.name) == ProcessFile.processFilePrefixLen:
-            return True, None
-        file = os.path.join(filePath,de.name[ProcessFile.processFilePrefixLen:])
-        if not os.path.isfile(file):
-            os.remove(de.path)
-            return True, None
-        pf = ProcessFile(
-            processFileDir=os.path.dirname(de.path),
-            filePath=filePath
-        )
-        if pf.isExpired():
-            os.remove(de.path)
-            return True, None
-        return True, pf
-
-    @staticmethod
-    def fileToProcessFile(filename: str) -> str:
-        return ProcessFile.processFilePrefix+filename
-
+    # Create a processFile for filePath.
+    # Reads processFile when it already exists, otherwise creates a
+    # new processFile using atomicWrite() which prevents two processes
+    # creating the same file. fileSync is False when another process
+    # created the processFile first, and ProcessFile should not be
+    # used in this case.
     def __init__(self, processFileDir: str, filePath: str):
-        self.processFilePath = os.path.join(processFileDir,".processfile_"+os.path.basename(filePath))
-        if os.path.isfile(self.processFilePath):
-            with open(self.processFilePath,"r") as f:
+        self.processFilePath = processFilePath = os.path.join(
+            processFileDir,
+            ProcessFile.processFilePrefix+os.path.basename(filePath)
+        )
+        if os.path.isfile(processFilePath):
+            self.fileSync = False
+            with open(processFilePath,"r") as f:
                 self.__dict__ = json.loads(next(f,"{}"))
-            self.fileSync = True
+            self.fileSync = len(self.__dict__) > 0
+            # Something wrong with file, could be empty, remove it.
+            if not self.fileSync:
+                os.remove(processFilePath)
         else:
             self.fileSync = False
             self.uuid = str(uuid.uuid4())
@@ -62,7 +55,41 @@ class ProcessFile():
             self.found = int(time.time())
             self.processing = 0
             self.processed = 0
-            self.write()
+            self.fileSync = self.atomicWrite()
+
+    def __str__(self) -> str:
+        if self.fileSync:
+            return "%d,%s,%s"%(self.fileSync,self.uuid,self.path)
+        return "%d"%self.fileSync
+
+    # factory() creates ProcessFile object from an existing file (dirEntry).
+    # Return False when entry is not a the name of a process file.
+    # Return True and None when process file expired/no-associated-file and dirEntry is deleted.
+    # Return True and ProcessFile when process file exists/was-created.
+    @staticmethod
+    def factory(pfentry: posix.DirEntry, filePath: str) -> (bool, "ProcessFile"):
+        if not pfentry.name.startswith(ProcessFile.processFilePrefix):
+            return False, None
+        if len(pfentry.name) == ProcessFile.processFilePrefixLen:
+            return False, None
+        file = os.path.join(filePath,pfentry.name[ProcessFile.processFilePrefixLen:])
+        if not os.path.isfile(file):
+            os.remove(pfentry.path)
+            return True, None
+        pf = ProcessFile(
+            processFileDir=os.path.dirname(pfentry.path),
+            filePath=filePath
+        )
+        if not pf.fileSync:
+            return True, None
+        if pf.isExpired():
+            os.remove(pfentry.path)
+            return True, None
+        return True, pf
+
+    @staticmethod
+    def fileToProcessFile(filename: str) -> str:
+        return ProcessFile.processFilePrefix+filename
 
     # Return True when the processfile on disk has the same UUID
     # as the processfile in memory, i.e. this process owns the
@@ -81,9 +108,9 @@ class ProcessFile():
 
     # Return True when this FILES has the same processfile, returns False
     # when another FILES has taken control of the processFile.
-    def write(self) -> bool:
+    def atomicWrite(self) -> bool:
         """
-        Write handles the problem of two FILES at the same time want to own
+        atomicWrite handles the problem of two FILES at the same time want to own
         the same file, and both writing the same process-file at the same
         time.
         The solution is Linux specific: Both processes write to the same
@@ -108,20 +135,13 @@ class ProcessFile():
         """
         try:
             if os.path.isfile(self.processFilePath):
-                if not self.ownFile():
-                    return
-                # Cannot have an empty processfile, so create a tempfile
-                # and use the atomic rename command.
-                tempfile = self.processFilePath+"_"+uuid.uuid4()
-                with open(tempfile,"w") as f:
-                    json.dump(self.__dict__,f)
-                    os.rename(tempfile,self.processFilePath)
-                    return True
+                return self.ownFile()
             with open(self.processFilePath,"a+") as f:
-                line = json.dumps(self.__dict__,f)+"\n"
+                line = json.dumps(self.__dict__)+"\n"
                 f.write(line)
-            self.fileSync = self.ownFile()
+            return self.ownFile()
         except Exception:
+            traceback.print_exc()
             # WindowsOS raises an Exception in the second process that
             # appends to the same file.
             # No exception on Linux, two processes can write to the same file.
@@ -130,11 +150,18 @@ class ProcessFile():
             # the file prior to each write and no intervening file modification
             # operation shall occur between changing the file offset and the
             # write operation.
-            pass
+            return False
 
     def processing(self) -> None:
+        if not self.fileSync:
+            return
         self.processing = time.time()
-        self.write()
+        # delete and recreate would leave an empty processfile, instead create
+        # a tempfile and use the atomic rename command.
+        tempfile = self.processFilePath+"_"+uuid.uuid4()
+        with open(tempfile,"w") as f:
+            json.dump(self.__dict__,f)
+            os.rename(tempfile,self.processFilePath)
 
     def isExpired(self) -> bool:
         return self.processing + 600 < time.time()
@@ -175,6 +202,13 @@ class Files(Cmd):
         self.cntDepth = self.depth
         self.debug = False
 
+    # Starts Files at the root paths.
+    def srtPath(self) -> None:
+        self.cntPath = self.path
+        self.cntProcPath = self.readonly
+        self.cntDepth = self.depth
+
+    # Change dir for Files, to a path within the root path.
     def setPath(self,path:str) -> None:
         if not path.startswith(self.path):
             raise Exception("Path must start with "+self.path+" path="+path)
@@ -187,14 +221,10 @@ class Files(Cmd):
             self.cntProcPath = os.path.join(self.readonly,path[len(self.path)+1:])
         self.cntDepth = self.pathDepth(path) - self.depth
 
-    def srtPath(self) -> None:
-        self.cntPath = self.path
-        self.cntProcPath = self.readonly
-        self.cntDepth = self.depth
-
+    # Change dir for Files, into a subdir of the current dir.
     def nxtPath(self,de: posix.DirEntry) -> bool:
         if self.cntDepth == 0:
-            raise False
+            return False
         if self.coupled:
             self.cntProcPath = de.path
         else:
@@ -204,9 +234,10 @@ class Files(Cmd):
         self.cntPath = de.path
         self.cntDepth -= 1
 
-    def prvPath(self) -> bool:
+    # Change dir for Files, out of a subdir and back into the parent dir.
+    def prvPath(self) -> None:
         if self.cntDepth > self.depth:
-            raise Exception("depth too large "+str(self.cntDepth))
+            raise Exception("too many prvPath compared to nxtPath "+str(self.cntDepth))
         self.cntPath = os.path.dirname(self.cntPath)
         if self.coupled:
             self.cntProcPath = self.cntPath
@@ -220,9 +251,6 @@ class Files(Cmd):
                 str(self.readonly),
                 self.depth,
                 str(self.feeds))
-
-    def schema(self) -> list:
-        return ["stream", "process-file",]
 
     def sample(self, feedName: str, n:int) -> (bool, dict):
         i = 0
@@ -275,15 +303,42 @@ class Files(Cmd):
         if i < n:
             yield(True, None)
 
+    def data(self, feedName: str, n:int) -> list:
+        ret = []
+        if n <= 0:
+            return ret
+        i = 0
+        for feed in self.feeds:
+            if feed["feed"] == feedName:
+                for modifiedTime in sorted(feed["order"]):
+                    j = len(ret)
+                    for pn in feed["order"][modifiedTime]:
+                        pf = ProcessFile(
+                            processFileDir=self.cntProcPath,
+                            filePath=pn
+                        )
+                        if pf.fileSync:
+                            i += 1
+                            ret.append(pn)
+                            if i == n:
+                                break
+                    # Remove process file that are to be returned.
+                    for pn in ret[j:]:
+                        feed["order"][modifiedTime].remove(pn)
+                    if i == n:
+                        return ret
+        return ret
+
     # Avoid re-scanning a directory that has not changed by tracking
     # directory's modification time in path_mtimes, which changes
     # when directory changes i.e. something added/removed in the directory.
-    def execute(self) -> None:
+    def execute(self) -> bool:
         if len(self.path_mtimes) == 0:
             self.srtPath()
             self.initialDirScan()
         else:
             self.maintenanceDirScan()
+        return False  # 
 
     @classmethod
     def removeNest(cls, dir: str) -> None:
@@ -298,6 +353,7 @@ class Files(Cmd):
         for feed in self.feeds:
             o = feed["order"]
             if feed["regex"].match(path):
+                self.disco.load(path)
                 o.setdefault(mtime,set()).add(path)
                 return True
         return False
@@ -307,7 +363,8 @@ class Files(Cmd):
     def initialDirScan(self) -> None:
         # print("initialDirScan %s %s %d" % (self.cntProcPath,self.cntPath,self.cntDepth))
         if not os.path.isdir(self.cntPath):
-            raise Exception("No such directory "+self.cntPath)
+            # raise Exception("No such directory "+self.cntPath)
+            return
         if not os.path.isdir(self.cntProcPath):
             os.mkdir(path=self.cntProcPath)
         self.path_mtimes[self.cntPath] = os.path.getmtime(self.cntPath)
@@ -382,10 +439,9 @@ class Files(Cmd):
     # Purge the in memory cache for the directory, and rebuild this cache, and
     # resync the processFiles too. Also, run the initialDirScan for any new
     # subdirs.
-    def maintenanceDirScan(self) -> None:
+    def maintenanceDirScan(self) -> bool:
         path_mtimes = self.path_mtimes
         self.path_mtimes = {}
-        
         for filepath, mtime in path_mtimes.items():
             try:
                 current_mtime = os.path.getmtime(filepath)
@@ -432,17 +488,14 @@ class Files(Cmd):
         else:
             raise Exception("Unexpected cmd #"+str(i)+" "+str(tc[1]))
         return True
+    
+    @staticmethod
+    def testJahCallBack(ip:str, port:int, requestId:int, content:dict) -> None:
+        print(str(ip)+" "+str(port)+" "+str(requestId)+" "+str(content))
 
     @staticmethod
-    def main():
-        """
-        parser = argparse.ArgumentParser(description="Wi")
-        parser.add_argument('--dir', help="worksheet dir")
-        parser.add_argument('--hdir', help="hall dir")
-        parser.add_argument('-d', '--debug', help="activate debugging", action="store_true")
-        args = parser.parse_args()
-        """
-        cmd = {
+    def testCmd() -> dict:
+        return {
         "root": "test",
         "path": {
             "path": "test/filestesting_tmp",
@@ -454,9 +507,12 @@ class Files(Cmd):
             ]
         }
         }
-        testcases = [
+
+    testcases = [
             [-1, "purgeDir", "test/filestesting_tmp" ],
+            [-1, "purgeDir", "test/filestesting_tmp_PF" ],
             [0, "mkdir", "test/filestesting_tmp" ],
+            [0, "mkdir", "test/filestesting_tmp_PF" ],
             [1, "touch", "test/filestesting_tmp/test1.pcap" ],
             [1, "touch", "test/filestesting_tmp/test1.tmp" ],
             [2, "touch", "test/filestesting_tmp/test2.pcap" ],
@@ -472,17 +528,21 @@ class Files(Cmd):
             [6, "rmdir", "test/filestesting_tmp" ],
             [-1]
         ]
+
+    @staticmethod
+    def main():
         tc_i = 0
-        while Files.runTestcase(-1,testcases[tc_i]):
+        while Files.runTestcase(-1,Files.testcases[tc_i]):
             tc_i += 1
-        files = Files(cmd)
+        files = Files(Files.testCmd())
         for i in range(10):
-            while Files.runTestcase(i,testcases[tc_i]):
+            while Files.runTestcase(i,Files.testcases[tc_i]):
                 tc_i += 1
             files.execute()
             print("SAMPLE:")
             for (b,d) in files.sample(feedName=None,n=10):
                 print(str(b)+" "+str(d))
+            print("Disco:"+files.disco.dumps())
             time.sleep(0.5)
         
 

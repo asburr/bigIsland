@@ -41,7 +41,7 @@ class WiSampleGrid(wx.Frame):
         boxSizer = wx.BoxSizer(wx.VERTICAL)
         self.mudp = mudp
         self.panel = wx.Panel(self)
-        self.label = wx.TextCtrl(self.panel, style=wx.TE_READONLY, value="0 rows (loading)")
+        self.label = wx.TextCtrl(self.panel, style=wx.TE_READONLY, value="0 rows (waiting for database to respond)")
         boxSizer.Add(self.label, proportion=0, flag=wx.EXPAND)
         self.headers=[]
         self.rows=[]
@@ -69,23 +69,22 @@ class WiSampleGrid(wx.Frame):
     def timerTick(self):
         eom = False
         updates = False
+        timeout = False
         for ret in self.mudp.recvRequestId(self.requestId):
             content, eom = ret
             if content is not None:
                 j = json.loads(content)
-                if self.headers is None:
+                if len(self.headers) == 0:
                     updates = True
                     self.headers = j["_sample_response_"]["schema"]
-                elif content:  # None content when timeout.
+                else:
                     updates = True
                     row = []
                     for header in self.headers:
                         row.append(j[header])
-                    if self.rows is None:
-                        self.rows = [row]
-                    else:
-                        self.rows.append(row)
+                    self.rows.append(row)
             if eom:
+                timeout = not content  # None content when timeout.                                               
                 self.timer.Stop()
             else:
                 ret = next(self.mudp.recvRequestId(self.requestId))
@@ -93,7 +92,12 @@ class WiSampleGrid(wx.Frame):
             self.label.SetValue("%d rows (loading)"%len(self.rows))
             self.grid.update(titles=self.headers, row_col=self.rows)
         if eom:
-            self.label.SetValue("%d rows (done)"%len(self.rows))
+            if len(self.headers) == 0:
+                self.label.SetValue("0 rows (no response; is database up?)")
+            elif timeout:
+                self.label.SetValue("%d rows (partial response that timed out; is database overloaded?)"%len(self.rows))
+            else:
+                self.label.SetValue("%d rows (complete response)"%len(self.rows))
 
 
 class WiWS(wx.Frame):
@@ -134,7 +138,7 @@ class WiWS(wx.Frame):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(5)
         s.bind(("", 0))
-        self.mudp = MUDP(s, clientMode=True)
+        self.mudp = MUDP(s, skipBad=False)
 
     def on_addcmd(self, event):
         wsn = self.ws_selection.GetValue()
