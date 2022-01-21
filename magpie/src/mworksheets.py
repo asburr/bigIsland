@@ -89,21 +89,26 @@ class MWorksheets:
         except Exception as e:
             raise Exception("Failed to read " + schema + str(e))
         self.ws = {}
+        self.wsname = {}
         self.feedNames = set()
         for fn in os.listdir(path=self.dir):
             if fn == "worksheetHelp.json":
                 continue
             if not fn.endswith(".json"):
                 continue
-            n = fn[:-5]
+            name=fn[:-5]
             dfn = os.path.join(self.dir,fn)
             try:
                 with open(dfn, "r") as f:
                     j = json.load(f)
-                error = self.verifycmds(j)
-                if error:
-                    raise Exception(error)
-                self.ws[n]  = j
+                wscount = 0
+                for uuid in j.keys():
+                    wscount += 1
+                    self.ws[uuid]  = j[uuid]
+                    self.wsname[name+"_"+str(wscount)] = uuid
+                    error = self.verifycmds(self.ws[uuid])
+                    if error:
+                        raise Exception(error)
             except json.JSONDecodeError as err:
                 raise Exception("Failed to parse " + dfn + " " + str(err))
             except Exception as e:
@@ -111,21 +116,21 @@ class MWorksheets:
                 raise Exception("Failed to parse " + dfn + " " + str(e))
         self.expandcmds()
         self.feeds = {}
-        for wsn in self.ws.keys():
-            for cmd in self.ws[wsn]:
-                feeds = self.cmdFeedRef(cmd)
+        for wsuuid, wsj in self.ws.items():
+            for cmduuid, cmdj in wsj.items():
+                feeds = self.cmdFeedRef(cmdj)
                 if len(feeds) == 0:
-                    cmd["__state__"] = "pending"
+                    cmdj["__state__"] = "pending"
                 else:
-                    cmd["__state__"] = "blocked"
-                feeds = self.cmdFeed(cmd)
+                    cmdj["__state__"] = "blocked"
+                feeds = self.cmdFeed(cmdj)
                 for feed in feeds:
                     if feed in self.feeds:
-                        raise Exception("Duplicate feeds "+feed+" in "+wsn)
-                    self.feeds[feed] = (wsn, cmd)
-        for wsn in self.ws.keys():
-            for cmd in self.ws[wsn]:
-                feeds = self.cmdFeedRef(cmd)
+                        raise Exception("Duplicate feeds "+feed+" in "+wsuuid)
+                    self.feeds[feed] = (wsuuid, cmduuid)
+        for wsuuid, wsj in self.ws.items():
+            for cmduuid, cmdj in wsj.items():
+                feeds = self.cmdFeedRef(cmdj)
                 for feed in feeds:
                     if feed not in self.feeds:
                         ratio = 0.0
@@ -143,9 +148,9 @@ class MWorksheets:
                                 nearest = of
                                 ratio = r
                         if nearest:
-                            raise Exception("Unknown feed "+feed+" in worksheet \""+wsn +"\" did you mean \"" + nearest + "\"?")
+                            raise Exception("Unknown feed "+feed+" in worksheet \""+wsuuid +"\" did you mean \"" + nearest + "\"?")
                         else:
-                            raise Exception("Unknown feed "+feed+" in "+wsn)
+                            raise Exception("Unknown feed "+feed+" in "+wsuuid)
 
     def _expandComposite(self, cmd: any, schema: any) -> None:
         for k in schema.keys():
@@ -187,10 +192,10 @@ class MWorksheets:
         self._expandcmd(cmd, self.schema[cmdname])
         
     def expandcmds(self) -> None:
-        for wsn in self.ws.keys():
-            for self.expandingcmd in self.ws[wsn]:
-                cmdname = self.cmdName(self.expandingcmd)
-                self.expandingcmd = self.expandingcmd[cmdname]
+        for wsuuid, wsj in self.ws.items():
+            for cmduuid, cmdj in wsj.items():
+                cmdname = cmdj["cmd"]
+                self.expandingcmd = cmdj["params"]
                 self._expandcmd(self.expandingcmd, self.schema[cmdname])
 
     def cmd_titles(self) -> list:
@@ -202,7 +207,7 @@ class MWorksheets:
     def titles(self) -> list:
         return list(self.ws.keys())
 
-    def sheet(self, title: str) -> list:
+    def sheet(self, title: str) -> dict:
         return self.ws[title]
 
     def addSheet(self, title: str) -> str:
@@ -213,20 +218,20 @@ class MWorksheets:
 
     def inputCmdOutput(self, title: str) -> list:
         rows=[]
-        for cmd in self.ws[title]:
+        for cmd in self.ws[title]["cmds"]:
             inputs = "\n".join(self.cmdFeedRef(cmd))
             if len(inputs) == 0:
                 rows.append([
                     "",
-                    self.cmdName(cmd),
+                    cmd["cmd"],
                     "\n".join(self.cmdFeed(cmd))
                     ])
-        for cmd in self.ws[title]:
+        for cmd in self.ws[title]["cmds"]:
             inputs = "\n".join(self.cmdFeedRef(cmd))
             if len(inputs) > 0:
                 rows.append([
                     inputs,
-                    self.cmdName(cmd),
+                    cmd["cmd"],
                     "\n".join(self.cmdFeed(cmd))
                     ])
         return rows
@@ -385,7 +390,8 @@ print(desc)
         return (params, selected, description)
 
     def getCmd(self, outputs: str) -> dict:
-        return self.feeds[outputs.split("\n")[0]][1]
+        (wsuuid, cmduuid) = self.feeds[outputs.split("\n")[0]]
+        return self.ws[wsuuid][cmduuid]
         
     def fieldInSelected(self, field: str, selected: dict) -> bool:
         if field in selected:
@@ -491,7 +497,7 @@ print(desc)
     # Update values in command from selected values.
     def updateCmd(self, wsn: str, cmd: dict, selected: dict) -> str:
         if cmd is not None:
-            cmdname = self.cmdName(cmd)
+            cmdname = cmd["cmd"]
             backup = copy.deepcopy(cmd)
             # Remove command from all the feeds.
             for feed in self.cmdFeed(cmd):
@@ -512,7 +518,7 @@ print(desc)
                 for j in self.sheet(wsn):
                     if cmdname in j:
                         return "More than one cmd \"" + cmdname + "\""
-                self.ws[wsn].append(cmd)
+                self.ws[wsn]["cmds"].append(cmd)
             try:
                 # Update feed.
                 feeds = self.cmdFeed(cmd)
@@ -521,6 +527,7 @@ print(desc)
             except Exception as e:
                 error = "Bad feed name " + type(e).__name__ + " " + str(e)
         except Exception as e:
+            traceback.print_exc()
             error = str(e)
         # print(json.dumps(self.ws[wsn], indent=4, sort_keys=True))
         if not error:
@@ -530,7 +537,7 @@ print(desc)
                         raise Exception("duplicate feed name " + feed)
                     undofeeds.append(feed)
                     self.feeds[feed] = (wsn, cmd)
-                error = self.verifycmds(self.ws[wsn])
+                error = self.verifycmds(self.ws[wsn]["cmds"])
                 self.expandingcmd = cmd[cmdname]
                 self._expandcmd(self.expandingcmd, self.schema[cmdname])
             except Exception as e:
@@ -546,7 +553,7 @@ print(desc)
                 del cmd[cmdname]
                 cmd[cmdname] = backup[cmdname]
             else:
-                del self.ws[wsn][-1]
+                del self.ws[wsn]["cmds"][-1]
         return error
 
     def _purgeCmd(self, cmd: any, schema: any) -> None:
@@ -573,14 +580,14 @@ print(desc)
 
     # Remove for list all deleted entries (__state__ == deleted)
     def purgeCmd(self, cmd: dict) -> None:
-        cmdname = self.cmdName(cmd)
+        cmdname = cmd["cmd"]
         self._purgeCmd(cmd[cmdname], self.schema[cmdname])
 
     def deleteCmd(self, wsn: str, outputs: str) -> None:
         cmd = self.getCmd(outputs)
         for feed in self.cmdFeed(cmd):
             del self.feeds[feed]
-        self.ws[wsn].remove(cmd)
+        self.ws[wsn]["cmds"].remove(cmd)
         
     def _feedComposite(self, cmd: any, schema: any, feeds: list) -> None:
         for k in schema.keys():
@@ -598,6 +605,8 @@ print(desc)
                 self._feedComposite(j, schema, feeds)
 
     def _feedcmd(self, cmd: any, schema: any, feeds: list) -> None:
+        if cmd is None:
+            return
         t = schema["type"]
         if t == "feed":
             cmd = cmd.format(
@@ -609,11 +618,11 @@ print(desc)
         if t in self.feed_handlers:
             self.feed_handlers[t](cmd, schema, feeds)
 
-    def cmdFeed(self, cmd: any) -> list:
-        cmdname = self.cmdName(cmd)
+    def cmdFeed(self, cmd: dict) -> list:
+        cmdname = cmd["cmd"]
         feeds = []
-        self.expandingcmd = cmd[cmdname]
-        self._feedcmd(cmd[cmdname], self.schema[cmdname], feeds)
+        self.expandingcmd = cmd["params"]
+        self._feedcmd(self.expandingcmd, self.schema[cmdname], feeds)
         return feeds
             
     def _feedRefComposite(self, cmd: any, schema: any, feeds: list) -> None:
@@ -632,6 +641,7 @@ print(desc)
                 self._feedRefComposite(j, schema, feeds)
 
     def _feedRefcmd(self, cmd: any, schema: any, feeds: list) -> None:
+        # print("_feedRefcmd "+str(cmd)+" "+str(schema))
         t = schema["type"]
         if t == "feedRef" and cmd is not None:
             feeds.append(cmd)
@@ -639,9 +649,8 @@ print(desc)
             self.feedRef_handlers[t](cmd, schema, feeds)
 
     def cmdFeedRef(self, cmd: any) -> list:
-        cmdname = self.cmdName(cmd)
         feeds = []
-        self._feedRefcmd(cmd[cmdname], self.schema[cmdname], feeds)
+        self._feedRefcmd(cmd["params"], self.schema[cmd["cmd"]], feeds)
         return feeds
 
     def _inputComposite(self, cmd: any, schema: any, inputs: list) -> None:
@@ -670,17 +679,10 @@ print(desc)
         return
 
     def cmdinput(self, cmd: any) -> list:
-        cmdname = self.cmdName(cmd)
+        cmdname = cmd["cmd"]
         inputs = []
         self._inputcmd(cmd[cmdname], self.schema[cmdname], inputs)
         return inputs
-
-    @staticmethod
-    def cmdName(cmd: any) -> str:
-        for k in cmd.keys():
-            if k not in ["__state__"]:
-                return k
-        raise Exception("cmdName no name")
 
     def _Error(self, stack: list, error:str) -> str:
         cf = currentframe()
@@ -847,15 +849,15 @@ print(desc)
         return self.verify_handlers[t](stack, cmd, schema)
 
     def verifycmd(self, cmd: dict) -> str:
-        name = list(cmd.keys())[0]
+        name = cmd["cmd"]
         if name not in self.schema:
             return self._Error([], "Unexpected cmd name " + name)
-        error = self._verifycmd([name], cmd[name], self.schema[name])
+        error = self._verifycmd([name], cmd["params"], self.schema[name])
         if error:
             return "Error in cmd " + name + " " + error
 
     def verifycmds(self, j: list) -> str:
-        for cmd in j:
+        for cmd in j.values():
             error = self.verifycmd(cmd)
             if error:
                 return error
@@ -892,12 +894,16 @@ print(desc)
         parser = argparse.ArgumentParser(description="Worksheet")
         parser.add_argument('dir', help="worksheet dir", nargs='?', const="worksheets", type=str)
         args = parser.parse_args()
-        ws = MWorksheets(args.dir)
+        try:
+            ws = MWorksheets(args.dir)
+        except Exception:
+            traceback.print_exc()
         at="files"
         print(at)
         (d_params, d_defaults, d_desc) = ws.paramsCmd(None,at)
         outputs = "directory.files.pbx"
         cmd = ws.getCmd(outputs)
+        print(cmd)
         (params, selected, description) = ws.paramsCmd(cmd,at)
         print("params")
         print(d_params)
@@ -907,16 +913,16 @@ print(desc)
         print(selected)
         for title in ws.titles():
             print("Sheet:" + title)
-            for cmd in ws.sheet(title):
-                print("      " + ws.cmdName(cmd) + ":" + str(ws.cmdFeed(cmd)))
+            for cmd in ws.sheet(title).values():
+                print("      " + cmd["cmd"] + ":" + str(ws.cmdFeed(cmd)))
         print("Feeds ready to run")
         for feed in ws.feeds:
-            (wsn, cmd) = ws.feeds[feed]
+            cmd = ws.getCmd(feed)
             if cmd["__state__"] == "pending":
                 print("    " + feed + " " + cmd["__state__"])
         print("Feeds blocked")
         for feed in ws.feeds:
-            (wsn, cmd) = ws.feeds[feed]
+            cmd = ws.getCmd(feed)
             if cmd["__state__"] == "blocked":
                 print("    " + feed + " " + cmd["__state__"])
 

@@ -315,6 +315,72 @@
             "type": "int",
             "desc": "The request's id"
         }
+    }, "_sheetsReq_": {
+        "type": "composite",
+        "desc": "Gets uuid and filename for all of the sheets"
+    }, "_sheetsCfm_": {
+        "type": "composite",
+        "desc": "list of sheets",
+        "sheets": {
+            "type": "listComposites", "desc": "List of sheets",
+            "uuid": {
+                "type": "str",
+                "desc": "sheet UUID"
+            },
+            "filename": {
+                "type": "str",
+                "desc": "The file name that holds the sheet"
+            }
+        }
+    }, "_sheetReq_": {
+        "type": "composite",
+        "desc": "Get a sheet",
+        "uuid": {
+            "type": "str",
+            "desc": "sheet UUID"
+        }
+    }, "_sheetCfm_": {
+        "type": "composite",
+        "desc": "Copy of commands in the sheet",
+        "uuid": {
+            "type": "str",
+            "desc": "cmd UUID"
+        },
+        "version": {
+            "type": "str",
+            "desc": "cmd version"
+        },
+        "cmd": {
+            "type": "any",
+            "desc": "cmd"
+        }
+    }, "_cmdReq_": {
+        "type": "composite",
+        "desc": "Update a cmd",
+        "sheetUuid": {
+            "type": "str",
+            "desc": "sheet UUID"
+        },
+        "cmdUuid": {
+            "type": "str",
+            "desc": "cmd UUID"
+        },
+        "version": {
+            "type": "str",
+            "desc": "Version of the command prior to the update"
+        },
+        "cmd": {
+            "type": "any",
+            "desc": "The updated command"
+        }
+    }, "_cmdCfm_": {
+        "type": "composite",
+        "desc": "_cmdCfm_",
+        "status": {
+            "type": "str",
+            "choice": ["complete", "wrong version"],
+            "desc": "Update status."
+        }
     }, "_streamReq_": {
         "type": "composite",
         "desc": "_streamReq_ is sent by the Receiver to the Hallelu to start a stream of data from the Hallelu's Jah. Same Message is forwarded to each Jah by Hallelu, to start stream processing which runs contineously building dataCfm messages so they are ready to be transmitted to the Receiver as soon as asked.",
