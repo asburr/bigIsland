@@ -4,7 +4,7 @@ A very big island is called a continent; an island is a mass of land that is bot
 
 The biggest island in the world is Greenland; Australia is a continent.
 
-This project is not a single project:
+This project contains:
 1. <a href="magpie.md">Magpie</a> Utility modules;
 2. <a href="hallelujah/hallelujah.md">Hallelujah</a> another parallel database;
 3. <a href="discovery.md">Discovery</a> an assistant in data analysis and Hallelujah schema generation;
