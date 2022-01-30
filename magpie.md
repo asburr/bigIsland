@@ -6,9 +6,9 @@ Scientists think Magpies can recognize their reflection. An orange sticker on th
 This project is a collection of shiny things:
 1. <a href="magpie/src/mudp.py">mudp</a> udp wrapper;
 2. <a href="magpie/src/mudpAndGIL.md">mudp</a> udp wrapper;
-3. <a href="magpie/src/mistype.py">mudp</a> detect the datatype in a string;
-4. <a href="magpie/src/mlogger.py">mudp</a> logging wrapper;
-5. <a href="magpie/src/mthreads.py">mudp</a> threading wrapper;
-6. <a href="magpie/src/musage.py">mudp</a> psutils wrapper;
-7. <a href="magpie/src/mworksheets.py">mudp</a> hallelujah worksheets;
-8. <a href="magpie/src/mzdatetime.py">mudp</a> datetime wrapper.
+3. <a href="magpie/src/mistype.py">mistype</a> detect the datatype in a string;
+4. <a href="magpie/src/mlogger.py">mlogger</a> logging wrapper;
+5. <a href="magpie/src/mthreads.py">mthreads</a> threading wrapper;
+6. <a href="magpie/src/musage.py">musage</a> psutils wrapper;
+7. <a href="magpie/src/mworksheets.py">mworksheets</a> hallelujah worksheets;
+8. <a href="magpie/src/mzdatetime.py">mzdatetime</a> datetime wrapper.
