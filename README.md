@@ -6,7 +6,7 @@ The biggest island in the world is Greenland; Australia is a continent.
 
 This project is not a single project:
 1. <a href="magpie.md">Magpie</a> Utility modules;
-2. <a href="hallelujah.md">Hallelujah</a> another parallel database;
+2. <a href="hallelujah/hallelujah.md">Hallelujah</a> another parallel database;
 3. <a href="discovery.md">Discovery</a> an assistant in data analysis and Hallelujah schema generation;
 4. <a href="sheet.md">Sheet</a> view and transform data in Hallelujah.
 
