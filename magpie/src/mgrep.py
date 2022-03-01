@@ -11,8 +11,9 @@
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
 import os
 
-# Assuming an ordered text file, from smallest to largest, find value
-# in file using the binary searching algorithm.
+# Assuming an ordered text file, ordering from smallest to largest, find
+# the nearest value at the start of a line in the file using the binary
+# searching algorithm.
 class mGrep():
     def __init__(self, fn: str):
         self.f = open(fn,"r")
@@ -38,21 +39,31 @@ class mGrep():
             self.measure += 1
             self.f.seek(bi)
             line = self.f.readline()
-            while line:
+            if bi > 0 and line:
+                line = self.f.readline()
+            prior = None
+            while line:  # Smallest to largest is the file ordering.
                 linek = line[0:kl]
-                # print(line)
-                if k < linek:
-                    return None
-                elif k > linek:
+                # print("linear search "+line.strip())
+                if k > linek:
+                    if prior:
+                        return prior.strip()
+                    return prior
+                elif k < linek:
                     self.measure += 1
+                    prior = line
                     line = self.f.readline()
                 else:
                     return line.strip()
             return None
         linek = line[0:kl]
-        # print("looking at "+line)
+        # print("binary search "+line.strip())
         if k > linek:
-            return self.findX(k, kl, mi, mi+int((ei-mi)/2), ei, depth+1)
+            retval = self.findX(k, kl, mi, mi+int((ei-mi)/2), ei, depth+1)
+            if retval is None:
+                return line.strip()
+            else:
+                return retval
         if k < linek:
             return self.findX(k, kl, bi, bi+int((mi-bi)/2), mi, depth+1)
         return line.strip()
@@ -64,7 +75,7 @@ class mGrep():
 
     def main():
         g = mGrep("mgrep.txt")
-        for k in ["12345","12350","12355","12370"]:
+        for k in ["12345","12350","12355","12369","12370","12371"]:
             print(k+"="+str(g.find(k))+" "+str(g.measure)+" "+str(g.maxdepth))
             
 if __name__ == "__main__":
