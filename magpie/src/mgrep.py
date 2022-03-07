@@ -9,28 +9,59 @@
 # GNU General Public License for more details.
 # 
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
+#
+# Description
+#============
+# mgrep performes a bubble search through a text file and returns a matching
+# line.
+# Testing
+#========
+# Examples use the following file, test_mgrep.csv:
+"""
+1679327300,1679327311,1
+1679327312,1679327314,2
+1679327325,1679327325,3
+1679327326,1679327326,4
+1679327327,1679327330,5
+1679327359,1679327359,55
+1679327360,1679327360,6
+"""
+# Caution/limitations
+#====================
+# 1 - The file is ordered, smallest key first.
+# 2 - The key is at the start of the line.
+# 3 - The key is plain text. Double quotes and backslash and other escaping
+#     can be used in the rest of the line but not the key.
+# 4 - The key has an end-of-key character that separates the key from
+#     the rest of the line. For example, a coma is used in the example file.
+# Usage
+#======
+# 1 - Pseudo-random
+#   A partial-key returns the line from the middle of the matching keys.
+#     mgrep = mGrep("test_mgrep.csv")
+#     mgrep.find("1679327") => "1679327327,1679327330,5".
+# 2 - Exact
+#   A full-key returns the matching line.
+#     mgrep = mGrep("test_mgrep.csv")
+#     mgrep.find("1679327312,") => "1679327312,1679327314,2"
+#     mgrep.find("1679327324,") => None
+# 3 - Nearest
+#   A full-key returns the line with the nearest and smallest key.
+#     mgrep = mGrepNearest("test_mgrep.csv")
+#     mgrep.find("1679327324,") => "1679327312,1679327314,2"
+#     mgrep.find("1679327361,") => "1679327360,1679327360,6"
+# 4 - Range
+#   The example has ranges. Lines have a start key and end key, with a
+#   separator (a coma is used in the example). mgrep finds the matching
+#   start of the range. and whether the key is within the end of the range
+#   is outside the scope of mgrep i.e. extra logic is required to determine
+#   if a key is within the range.
+#     mgrep = mGrepNearest("test_mgrep.csv")
+#     mgrep.find("1679327324,") => "1679327312,1679327314,2"
+#     mgrep.find("1679327361,") => "1679327360,1679327360,6"
 import os
 
-# Testing uses the following file, test_mgrep.csv:
-"""
-1679327300,1
-1679327312,2
-1679327325,3
-1679327326,4
-1679327327,5
-1679327359,55
-1679327360,6
-"""
 
-# Assuming an ordered text file, ordering from smallest to largest, find
-# the value at the start of a line in the file using the binary
-# searching algorithm.
-# Usage: To be used with an ordered index file containing single key values.
-# I.e. 1234,5 would be the key 1234, and find("1234") returns this row.
-# Hint: Include the key-separator in the search-key, as a short key returns
-# the first matching result which is from near the middle of the section of
-# matching indexed-keys. i.e. find("1679337") returns 1679327327 from the
-# above test file, and find("1679337,") returns None.
 class mGrep():
     def __init__(self, fn: str):
         self.f = open(fn,"r")
@@ -85,11 +116,11 @@ class mGrep():
     def main():
         g = mGrep("test_mgrep.csv")
         for k,v in {
-                "1679327":"1679327327,5",
+                "1679327":"1679327327,1679327330,5",
                 "1679327,":None,
-                "1679327300,":"1679327300,1",
-                "1679327360,":"1679327360,6",
-                "1679327312,":"1679327312,2",
+                "1679327300,":"1679327300,1679327311,1",
+                "1679327360,":"1679327360,1679327360,6",
+                "1679327312,":"1679327312,1679327314,2",
                 "1679327324,":None,
                 "1679327361,":None
                   }.items():
@@ -100,16 +131,6 @@ class mGrep():
                 print("PASS "+k+"="+str(v)+" != "+str(i)+" "+str(g.measure)+" "+str(g.maxdepth))
 
 
-# Assuming an ordered text file, ordering from smallest to largest, find
-# the nearest smallest value at the start of a line in the file using the binary
-# searching algorithm.
-# Usage: To be used with a index file containing a range of key values. The
-# smallest key being first on the line. I.e. 1234:1236 would be the range
-# from 1234 to 1236, and find("1235") returns this row.
-# Hint: Include the key-separator in the search-key, as a short key returns
-# the first matching result which is from near the middle of the section of
-# matching indexed-keys. i.e. find("1679337") returns 1679327327 from the
-# above test file, and find("1679337,") returns None.
 class mGrepNearest():
     def __init__(self, fn: str):
         self.f = open(fn,"r")
@@ -173,13 +194,13 @@ class mGrepNearest():
     def main():
         g = mGrepNearest("test_mgrep.csv")
         for k,v in {
-                "1679327":"1679327327,5",
+                "1679327":"1679327327,1679327330,5",
                 "1679327,":None,
-                "1679327300,":"1679327300,1",
-                "1679327360,":"1679327360,6",
-                "1679327312,":"1679327312,2",
-                "1679327324,":"1679327312,2",
-                "1679327361,":"1679327360,6"
+                "1679327300,":"1679327300,1679327311,1",
+                "1679327360,":"1679327360,1679327360,6",
+                "1679327312,":"1679327312,1679327314,2",
+                "1679327324,":"1679327312,1679327314,2",
+                "1679327361,":"1679327360,1679327360,6"
                   }.items():
             i = g.find(k)
             if v != i:
