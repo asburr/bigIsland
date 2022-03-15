@@ -43,6 +43,11 @@
 # The Client API
 # ==============
 # see examples in main()
+#
+# Notes about binding addresses in particular IPv6:
+# '' is ENYADDR, 0 causes bind to select a random port.
+# IPv6 requires socket.bind((host, port, flowinfo, scope_id))
+#
 import socket
 import select
 import traceback

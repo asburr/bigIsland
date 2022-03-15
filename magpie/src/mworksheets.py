@@ -101,14 +101,16 @@ class MWorksheets:
             try:
                 with open(dfn, "r") as f:
                     j = json.load(f)
-                wscount = 0
-                for uuid in j.keys():
-                    wscount += 1
-                    self.ws[uuid]  = j[uuid]
-                    self.wsname[name+"_"+str(wscount)] = uuid
-                    error = self.verifycmds(self.ws[uuid])
-                    if error:
-                        raise Exception(error)
+                if j["name"] != name:
+                    raise Exception("Failed : worksheet name "+j["name"]+" not matching filename "+name)
+                self.ws[j["uuid"]]  = j
+                self.wsname[name] = j
+                j["uuidcmds"] = {}
+                for cmdj in j["cmds"]:
+                    j["uuidcmds"][cmdj["uuid"]] = cmdj
+                error = self.verifycmds(j["cmds"])
+                if error:
+                    raise Exception(error)
             except json.JSONDecodeError as err:
                 raise Exception("Failed to parse " + dfn + " " + str(err))
             except Exception as e:
@@ -117,7 +119,7 @@ class MWorksheets:
         self.expandcmds()
         self.feeds = {}
         for wsuuid, wsj in self.ws.items():
-            for cmduuid, cmdj in wsj.items():
+            for cmdj in wsj["cmds"]:
                 feeds = self.cmdFeedRef(cmdj)
                 if len(feeds) == 0:
                     cmdj["__state__"] = "pending"
@@ -127,9 +129,9 @@ class MWorksheets:
                 for feed in feeds:
                     if feed in self.feeds:
                         raise Exception("Duplicate feeds "+feed+" in "+wsuuid)
-                    self.feeds[feed] = (wsuuid, cmduuid)
+                    self.feeds[feed] = (wsuuid, cmdj["uuid"])
         for wsuuid, wsj in self.ws.items():
-            for cmduuid, cmdj in wsj.items():
+            for cmdj in wsj["cmds"]:
                 feeds = self.cmdFeedRef(cmdj)
                 for feed in feeds:
                     if feed not in self.feeds:
@@ -193,7 +195,7 @@ class MWorksheets:
         
     def expandcmds(self) -> None:
         for wsuuid, wsj in self.ws.items():
-            for cmduuid, cmdj in wsj.items():
+            for cmdj in wsj["cmds"]:
                 cmdname = cmdj["cmd"]
                 self.expandingcmd = cmdj["params"]
                 self._expandcmd(self.expandingcmd, self.schema[cmdname])
@@ -391,7 +393,7 @@ print(desc)
 
     def getCmd(self, outputs: str) -> dict:
         (wsuuid, cmduuid) = self.feeds[outputs.split("\n")[0]]
-        return self.ws[wsuuid][cmduuid]
+        return self.ws[wsuuid]["uuidcmds"][cmduuid]
         
     def fieldInSelected(self, field: str, selected: dict) -> bool:
         if field in selected:
@@ -857,7 +859,7 @@ print(desc)
             return "Error in cmd " + name + " " + error
 
     def verifycmds(self, j: list) -> str:
-        for cmd in j.values():
+        for cmd in j:
             error = self.verifycmd(cmd)
             if error:
                 return error
@@ -913,7 +915,7 @@ print(desc)
         print(selected)
         for title in ws.titles():
             print("Sheet:" + title)
-            for cmd in ws.sheet(title).values():
+            for cmd in ws.sheet(title)["cmds"]:
                 print("      " + cmd["cmd"] + ":" + str(ws.cmdFeed(cmd)))
         print("Feeds ready to run")
         for feed in ws.feeds:
