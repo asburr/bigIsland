@@ -20,6 +20,9 @@ from discovery.src.CSVParser import CSVParser
 
 
 class Loadf(Cmd):
+    """
+ Loadf: Loads data from a file
+    """
     def __init__(self, cmd: dict):
         super().__init__()
         self.fileHandlers = {
@@ -28,12 +31,6 @@ class Loadf(Cmd):
             ".tar.gz": self.__readtargz,
             '.__tar.gz__': self.__read__targz__
         }
-
-    def schema(self) -> list:
-        return []
-
-    def sample(self, feedName: str, n:int) -> (bool, dict):
-        return
 
     def execute(self) -> None:
         return

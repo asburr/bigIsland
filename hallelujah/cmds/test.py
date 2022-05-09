@@ -15,14 +15,14 @@ from cmd import Cmd
 
 class Test(Cmd):
     """
- Test: Just returns helloworld for each execution.
+ Test: Just returns testing for each execution.
     """
     def __init__(self, cmd: dict):
         super().__init__()
         self.data = []
 
     def execute(self) -> None:
-        self.data.append("hello world")
+        self.data.append("testing")
 
     def data(self, feedName: str, n:int) -> list:
         retval = self.data

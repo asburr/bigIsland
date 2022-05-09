@@ -20,7 +20,6 @@ import posix
 import traceback
 
 
-
 # ProcessFile exists while a file is being processed.
 # The name of the ProcessFile includes the name of the file being
 # processed, starts with the prefix and followed by the file name.
@@ -173,14 +172,16 @@ class ProcessFile():
         return self.processed != 0
 
 
-# Files uses os.path.getmtime(), it returns an accurate timestamp for the
-# last time a directory was changed. Initially, Files scans all of the
-# directories, and caches in memory the path to the file that have not
-# been processed before. Next execution of Files, looks for changes in
-# the known directories. A different directory modified time, requires a
-# rescan of that directory looking for the new or removed files, and
-# the in memory cache is updated.
 class Files(Cmd):
+    """
+ Files: uses os.path.getmtime(), it returns an accurate timestamp for the
+ last time a directory was changed. Initially, Files scans all of the
+ directories, and caches in memory the path to the file that have not
+ been processed before. Next execution of Files, looks for changes in
+ the known directories. A different directory modified time, requires a
+ rescan of that directory looking for the new or removed files, and
+ the in memory cache is updated.
+    """
     def __init__(self, cmd: dict):
         super().__init__()
         self.path=cmd["path"]["path"]
@@ -251,57 +252,6 @@ class Files(Cmd):
                 str(self.readonly),
                 self.depth,
                 str(self.feeds))
-
-    def sample(self, feedName: str, n:int) -> (bool, dict):
-        i = 0
-        if feedName:
-            for feed in self.feeds:
-                if feed["feed"] == feedName:
-                    if i > n:
-                        break
-                    for modifiedTime in sorted(feed["order"]):
-                        for pn in feed["order"][modifiedTime]:
-                            i += 1
-                            if i > n:
-                                break
-                            yield (i == n, pn)
-        else:
-            j = n / len(self.feeds)
-            if j == 0:
-                j = 1
-            kfeeds = {}
-            for feed in self.feeds:
-                f = feed["feed"]
-                kfeeds[f] = 0
-                for modifiedTime in sorted(feed["order"]):
-                    if i > n:
-                        break
-                    for pn in feed["order"][modifiedTime]:
-                        i += 1
-                        if i > n:
-                            break
-                        yield (i == n, {"feed": f, "file": pn})
-                        if kfeeds[f] == j:
-                            break
-                        kfeeds[f] += 1
-                    if kfeeds[f] == j:
-                        break
-            for feed in self.feeds:
-                f = feed["feed"]
-                j = 0
-                for modifiedTime in sorted(feed["order"]):
-                    if i > n:
-                        break
-                    for pn in feed["order"][modifiedTime]:
-                        if i > n:
-                            break
-                        if j > kfeeds[f]:
-                            i += 1
-                            if i > n:
-                                break
-                            yield (i == n,{"stream": f, "file": pn})
-        if i < n:
-            yield(True, None)
 
     def data(self, feedName: str, n:int) -> list:
         ret = []
@@ -496,16 +446,21 @@ class Files(Cmd):
     @staticmethod
     def testCmd() -> dict:
         return {
-        "root": "test",
-        "path": {
-            "path": "test/filestesting_tmp",
-            "depth": 1,
-            "readonly": "test/filestesting_tmp_PF",
-            "feeds": [
-                {"feed": "test.pcap", "regex": ".*\\.pcap"},
-                {"feed": "test.new", "regex": ".*"}
-            ]
-        }
+            "uuid": "25f30f46-cd0a-46f2-812e-2e527e78a059",
+            "version": "1",
+            "cmd": "files",
+            "params": {
+                "root": "test",
+                "path": {
+                    "path": "test/filestesting_tmp",
+                    "depth": 1,
+                    "readonly": "test/filestesting_tmp_PF",
+                    "feeds": [
+                        {"feed": "test.pcap", "regex": ".*\\.pcap"},
+                        {"feed": "test.new", "regex": ".*"}
+                    ]
+                }
+            }
         }
 
     testcases = [
