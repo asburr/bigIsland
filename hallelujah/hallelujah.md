@@ -4,9 +4,7 @@ Hallelujah is a translation of a Hebrew phrase which means "praise ye Jah!". The
 
 Hallelujah is a massively parallelized analytics engine for large data sets that's quick to reconfigure for different results.
 
-1. <a href="hallelujah/congregation.py">congregation</a> exists per host. Forms the bases of the compute cluster, and starts all other components;
-2. <a href="hallelujah/hallelu.py">hallelu</a> exists per host and is the internal point of contact on this host;
-3. <a href="hallelujah/jah.py">jah</a> is a partition of functional data residing on a host;
-4. <a href="hallelujah/hallelujah.py">hallelujah</a> is the point of contact for a client.
-
-
+1. <a href="congregation.py">congregation</a> exists per host. Forms the bases of the compute cluster, and starts all other components;
+2. <a href="hallelu.py">hallelu</a> exists per host and is the internal point of contact on this host;
+3. <a href="jah.py">jah</a> is a partition of functional data residing on a host;
+4. <a href="hallelujah.py">hallelujah</a> is the point of contact for a client.
