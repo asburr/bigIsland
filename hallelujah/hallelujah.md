@@ -1,67 +1,12 @@
-# Introduction
+# Hallelujah
 
-Data is distributed across Jahs. Hallelu controls the Jahs.
+Hallelujah is a translation of a Hebrew phrase which means "praise ye Jah!". The word hallel in Hebrew means a joyous praise in song. The word Yah is a shortened form of YHWH (Yahweh in modern English) meaning "They Who Make That Which Has Been Made", or "They who Bring into Existence Whatever Exists". It's also a song written by Canadian singer Leonard Cohen, originally released on his album Various Positions (1984). Cohen took about five years to write the song, and reconfigured it numerous times for performances.
 
-Users communicate directly with Hallelu.
+Hallelujah is a massively parallelized analytics engine for large data sets that's quick to reconfigure for different results.
 
-Initially, there is one Hallelu with no jahs. This Hallelu creates others
-to perform user requests.
+1. <a href="hallelujah/congregation.py">congregation</a> exists per host. Forms the bases of the compute cluster, and starts all other components;
+2. <a href="hallelujah/hallelu.py">hallelu</a> exists per host and is the internal point of contact on this host;
+3. <a href="hallelujah/jah.py">jah</a> is a partition of functional data residing on a host;
+4. <a href="hallelujah/hallelujah.py">hallelujah</a> is the point of contact for a client.
 
-User requests include:
-* Loading of data from disk;
-* The schema for the data;
-* Summary stats for the data;
-* Extraction of data.
 
-Another Hallelu is created to manage the jahs that receive extracted data.
-
-# Walk thru
-
-## The Summit Hallelu
-
-The summits are not created by the Hallelujah database, the Summit Hallelu
-is created on each host by an external component.
-
-Summits have the same port number. File halleu_dir/hosts.json is a list of all
-of the hosts, and port number
-    file: hall_summit.json
-    contains: port, ip
-
-## Worksheets
-
-Worksheet is a list of commands, in creation order. It is stored on
-disk to provide persistancy after the failure of the host. The
-worksheet is replayed when the host recovers. Replay is by the summit Hallelu.
-
-The worksheet is maintained by the Summit Hallelu. Commands are added and
-deleted by the Summit Hallelu.
-
-A Hallelu is created for each command. The command is stored on disk in
-a file called "hall_<id>.json" this is in addition to being stored in the
-worksheet. Hallelu reads its command from the "hall_<id>.json" file.
-
-Summit runs a command when the input(s) are ready. Some commands have no
-inputs, these commands can run right away.
-
-## Commands
-
-Command is identified by the name of the feed it outputs.
-
-Users send commands to a Summit. The command wont run when the feed name is
-in-use by another command.
-
-Some commands are handled by Summit, such commands are:
-* lookups of feed or worksheet;
-* delete of feed or worksheet.
-
-Other commands are forwarded to the Hallelu that outputs the feed that the
-command inputs.
-
-## Deleting.
-
-Summit is locked for the duration of a delete. Deleted commands are logically
-deleted in the worksheet, they are marked as deleted but remain in the
-worksheet. The deleted feed's Hallelu is shutdown, the port is closed, and the
-feed is erased. The feed name(s) are changed to <name>_del_<date> in the
-worksheet. It is possible to reinstate a deleted command, as long as the
-<name>(s) have not been reused.
