@@ -24,7 +24,21 @@ class MWorkSheetException(Exception):
     pass
 
 
+class MCmd:
+    @staticmethod
+    def name(cmd: dict):
+        """ Get the type/name of the command """
+        return cmd["cmd"]
+
+    @staticmethod
+    def uuid(cmd: dict):
+        """ Get the unique name for the command """
+        return cmd["uuid"]
+
 class MWorksheets:
+    """
+  MWorksheets: a language to describe data grooming.
+    """
     def __init__(self, dir: str):
         self.verify_handlers = {
             "composite": self._verifyComposite,
@@ -88,6 +102,7 @@ class MWorksheets:
                     raise Exception("Failed to parse " + schema + " " + str(e))
         except Exception as e:
             raise Exception("Failed to read " + schema + str(e))
+        self.wsl = []
         self.ws = {}
         self.wsname = {}
         self.feedNames = set()
@@ -101,10 +116,12 @@ class MWorksheets:
             try:
                 with open(dfn, "r") as f:
                     j = json.load(f)
+                j["filename"] = fn
                 if j["name"] != name:
                     raise Exception("Failed : worksheet name "+j["name"]+" not matching filename "+name)
                 self.ws[j["uuid"]]  = j
                 self.wsname[name] = j
+                self.wsl.append(j)
                 j["uuidcmds"] = {}
                 for cmdj in j["cmds"]:
                     j["uuidcmds"][cmdj["uuid"]] = cmdj
@@ -118,8 +135,8 @@ class MWorksheets:
                 raise Exception("Failed to parse " + dfn + " " + str(e))
         self.expandcmds()
         self.feeds = {}
-        for wsuuid, wsj in self.ws.items():
-            for cmdj in wsj["cmds"]:
+        for ws in self:
+            for cmdj in ws["cmds"]:
                 feeds = self.cmdFeedRef(cmdj)
                 if len(feeds) == 0:
                     cmdj["__state__"] = "pending"
@@ -128,10 +145,12 @@ class MWorksheets:
                 feeds = self.cmdFeed(cmdj)
                 for feed in feeds:
                     if feed in self.feeds:
-                        raise Exception("Duplicate feeds "+feed+" in "+wsuuid)
-                    self.feeds[feed] = (wsuuid, cmdj["uuid"])
-        for wsuuid, wsj in self.ws.items():
-            for cmdj in wsj["cmds"]:
+                        raise Exception("Duplicate feeds "+feed+" in "+ws["uuid"])
+                    self.feeds[feed] = (ws["uuid"], cmdj["uuid"])
+        self.cmdUuidToCmd = {}
+        for ws in self:
+            for cmdj in ws["cmds"]:
+                self.cmdUuidToCmd[cmdj["uuid"]] = cmdj
                 feeds = self.cmdFeedRef(cmdj)
                 for feed in feeds:
                     if feed not in self.feeds:
@@ -150,10 +169,41 @@ class MWorksheets:
                                 nearest = of
                                 ratio = r
                         if nearest:
-                            raise Exception("Unknown feed "+feed+" in worksheet \""+wsuuid +"\" did you mean \"" + nearest + "\"?")
+                            raise Exception("Unknown feed "+feed+" in worksheet \""+ws["uuid"] +"\" did you mean \"" + nearest + "\"?")
                         else:
-                            raise Exception("Unknown feed "+feed+" in "+wsuuid)
+                            raise Exception("Unknown feed "+feed+" in "+ws["uuid"])
+        
 
+    def getWorkSheetCmds(self, sheetuuid: str) -> dict:
+        sheet = self.ws[sheetuuid]
+        for cmd in sheet["cmds"]:
+            yield cmd
+
+    def __str__(self) -> str:
+        s = "List of Sheets and their commands and the feed(s) they consume and output\n"
+        for ws in self:
+            s += "Sheet(" + ws["name"]+":"+ws["uuid"]+")\n"
+            for cmd in ws["cmds"]:
+                s += "      " + str(self.cmdFeedRef(cmd))+">"+ cmd["cmd"] + ">" + str(self.cmdFeed(cmd)) +"\n"
+        return s
+
+    def __iter__(self):
+        return iter(self.wsl)
+        
+    def status(self, ready: bool = True) -> str:
+        s = ""
+        if ready:
+            for feed in self.feeds:
+                cmd = self.getCmd(feed)
+                if cmd["__state__"] == "pending":
+                    s += "    " + feed + " " + cmd["__state__"] + "\n"
+        else:
+            for feed in self.feeds:
+                cmd = self.getCmd(feed)
+                if cmd["__state__"] == "blocked":
+                    s += "    " + feed + " " + cmd["__state__"] + "\n"
+        return s
+    
     def _expandComposite(self, cmd: any, schema: any) -> None:
         for k in schema.keys():
             if k in self.keyfields:
@@ -194,10 +244,10 @@ class MWorksheets:
         self._expandcmd(cmd, self.schema[cmdname])
         
     def expandcmds(self) -> None:
-        for wsuuid, wsj in self.ws.items():
-            for cmdj in wsj["cmds"]:
+        for ws in self:
+            for cmdj in ws["cmds"]:
                 cmdname = cmdj["cmd"]
-                self.expandingcmd = cmdj["params"]
+                self.expandingcmd = cmdj[cmdname]
                 self._expandcmd(self.expandingcmd, self.schema[cmdname])
 
     def cmd_titles(self) -> list:
@@ -207,35 +257,34 @@ class MWorksheets:
         return {name: self.schema[name]["desc"] for name in self.schema.keys() if name not in self.keyfields and not name.endswith(".macro")}
 
     def titles(self) -> list:
-        return list(self.ws.keys())
+        return [self.ws[uuid]["name"] for uuid in self.ws.keys()]
+
+    def uuidAtIdx(self, idx: int) -> str:
+        """ Return worksheet at uuid index, see titles() """
+        return list(self.ws.keys())[idx]
 
     def sheet(self, title: str) -> dict:
         return self.ws[title]
+
+    def sheetCmds(self, title: str) -> dict:
+        return self.ws[title]["cmds"]
 
     def addSheet(self, title: str) -> str:
         if title in self.ws:
             return "Duplicate name"
         self.ws[title] = {}
+        self.wsl.append(self.ws[title])
         return ""
 
     def inputCmdOutput(self, title: str) -> list:
         rows=[]
         for cmd in self.ws[title]["cmds"]:
             inputs = "\n".join(self.cmdFeedRef(cmd))
-            if len(inputs) == 0:
-                rows.append([
-                    "",
-                    cmd["cmd"],
-                    "\n".join(self.cmdFeed(cmd))
-                    ])
-        for cmd in self.ws[title]["cmds"]:
-            inputs = "\n".join(self.cmdFeedRef(cmd))
-            if len(inputs) > 0:
-                rows.append([
-                    inputs,
-                    cmd["cmd"],
-                    "\n".join(self.cmdFeed(cmd))
-                    ])
+            rows.append([
+                inputs,
+                cmd["cmd"],
+                "\n".join(self.cmdFeed(cmd))
+                ])
         return rows
 
     def _paramsComposite(
@@ -281,16 +330,18 @@ class MWorksheets:
             self._paramsComposite(at, None, field, schema, params, selected, description)
         return retval
 
-    # Return True when cmd has at least one field in the substructure, this
-    # is used by parent option to determine if the command has activated this
-    # substructure as an option.
     def _paramscmd(
         self, at: str, cmd: any, parent: str, schema: any,
         params: dict, selected: dict, description: dict
     ) -> bool:
+        """
+ Return True when cmd has at least one field in the substructure, this
+ is used by parent option to determine if the command has activated this
+ substructure as an option.
+        """
         nxtat = at
-        # print("paramscmd " + str(at) + " " + str(parent))
-        if at is not None:  # Searching for a subtree.
+        # print("paramscmd at=" + str(at) + " parent=" + str(parent)+" cmd="+str(cmd))
+        if at is not None and parent:  # Searching for a subtree.
             if not at.startswith(parent):
                 return False
             if at in parent:  # Found subtree.
@@ -308,10 +359,14 @@ class MWorksheets:
             p = parent[:parent.rindex(".")+1]
             if p not in params:
                 params[p] = "samplebutton"
-            else:
-                params[p] += ",samplebutton"
             selected[p] = cmd
-        if t in ["feed", "feedRef", "path", "field", "str", "email", "fmt", "any", "regex"]:
+        if t == "str" and "choice" in schema:
+            params[parent] = schema["choice"]
+            if cmd is not None:
+                selected[parent] = cmd
+            elif "default" in schema:
+                selected[parent] = schema["default"]
+        elif t in ["feed", "feedRef", "path", "field", "str", "email", "fmt", "any", "regex"]:
             if cmd is not None:
                 params[parent] = "str"
                 selected[parent] = cmd
@@ -352,6 +407,9 @@ class MWorksheets:
                 else:
                     if self.params_handlers[t](nxtat, cmd, parent, schema, params, selected, description):
                         retval = True
+        elif t.endswith(".macro"):
+            if cmd is not None:
+                return self._paramscmd(at, cmd, parent, self.schema[t], params, selected, description)
         else:
             raise Exception("Unexpected type " + t)
         if "desc" in schema:
@@ -362,25 +420,27 @@ class MWorksheets:
             selected[opt] = retval
         return retval
 
-    # Get cmd param name and type into "params". Put value from cmd into
-    # "selected", or any default value when there is no value in cmd.
-    # "at" is used to get a subset of the params from the schema, the
-    # subset is used to when an option is first turned on, and when add
-    # a entry to a list of params.
-    # Usage:
-    """
-from magpie.src.mworksheets import MWorksheets
-ws = MWorksheets("worksheets")
-cmd = ws.getCmd("directory.files.pbx")
-(params, selected, desc) = ws.paramsCmd(cmd, at="files")
-print(params)
-** Missing files.archive.option
-(params, selected, desc) = ws.paramsCmd(None, at="files")
-print(params)
-print(selected)
-print(desc)
-    """
+    
     def paramsCmd(self, cmd: dict, at: str) -> (dict, dict, dict):
+        """
+ paramsCmd: Get params from schema for the field "at".
+ "at" is the type/name of the command, for example, "file".
+ 1st returned dict, params, is the field name and type.
+ 2nd returned dict, selected, is the values from cmd, or the default value when there is no
+ value in cmd.
+ 3rd returned dict, desc, is the description of the field.
+ Usage:
+  from magpie.src.mworksheets import MWorksheets
+  ws = MWorksheets("worksheets")
+  cmd = ws.getCmd("directory.files.pbx")
+  (params, selected, desc) = ws.paramsCmd(cmd, at="files")
+  print(params)
+  ** Missing files.archive.option
+  (params, selected, desc) = ws.paramsCmd(None, at="files")
+  print(params)
+  print(selected)
+  print(desc)
+        """
         params = {}
         selected = {}
         description = {}
@@ -392,9 +452,14 @@ print(desc)
         return (params, selected, description)
 
     def getCmd(self, outputs: str) -> dict:
+        """ Get command by feed names in outputs separated by return. """
         (wsuuid, cmduuid) = self.feeds[outputs.split("\n")[0]]
         return self.ws[wsuuid]["uuidcmds"][cmduuid]
-        
+    
+    def getCmdUuid(self, uuid: str) -> dict:
+        """ Get command by UUID. """
+        return self.cmdUuidToCmd.get(uuid)
+
     def fieldInSelected(self, field: str, selected: dict) -> bool:
         if field in selected:
             return True
@@ -432,7 +497,8 @@ print(desc)
             except MWorkSheetException as e:
                 raise e;
             except Exception:
-                raise MWorkSheetException("field \""+field+"\" bad value \""+str(t)+"\"")
+                traceback.print_exc()
+                raise MWorkSheetException("field \""+field+"\" bad value \""+str(t)+"\" ")
         return cmd
 
     def _updateListComposite(
@@ -493,11 +559,15 @@ print(desc)
                 if k not in cmd:
                     cmd = {k: {}}
             return self.update_handlers[t](cmd, parent, schema, selected)
+        elif t.endswith(".macro"):
+            if t not in self.schema:
+                raise Exception("Unknown macro named " + t)
+            return self._updatecmd(cmd, parent, self.schema[t], selected)
         else:
             raise Exception("Unexpected type " + t)
 
-    # Update values in command from selected values.
     def updateCmd(self, wsn: str, cmd: dict, selected: dict) -> str:
+        """ Update values in command from selected values. """
         if cmd is not None:
             cmdname = cmd["cmd"]
             backup = copy.deepcopy(cmd)
@@ -580,8 +650,8 @@ print(desc)
             for i in reversed(delete):
                 del cmd[i]
 
-    # Remove for list all deleted entries (__state__ == deleted)
     def purgeCmd(self, cmd: dict) -> None:
+        """ Remove for list all deleted entries (__state__ == deleted) """
         cmdname = cmd["cmd"]
         self._purgeCmd(cmd[cmdname], self.schema[cmdname])
 
@@ -623,7 +693,7 @@ print(desc)
     def cmdFeed(self, cmd: dict) -> list:
         cmdname = cmd["cmd"]
         feeds = []
-        self.expandingcmd = cmd["params"]
+        self.expandingcmd = cmd[cmdname]
         self._feedcmd(self.expandingcmd, self.schema[cmdname], feeds)
         return feeds
             
@@ -652,7 +722,8 @@ print(desc)
 
     def cmdFeedRef(self, cmd: any) -> list:
         feeds = []
-        self._feedRefcmd(cmd["params"], self.schema[cmd["cmd"]], feeds)
+        cmdname = cmd["cmd"]
+        self._feedRefcmd(cmd[cmdname], self.schema[cmd["cmd"]], feeds)
         return feeds
 
     def _inputComposite(self, cmd: any, schema: any, inputs: list) -> None:
@@ -854,7 +925,7 @@ print(desc)
         name = cmd["cmd"]
         if name not in self.schema:
             return self._Error([], "Unexpected cmd name " + name)
-        error = self._verifycmd([name], cmd["params"], self.schema[name])
+        error = self._verifycmd([name], cmd[name], self.schema[name])
         if error:
             return "Error in cmd " + name + " " + error
 
@@ -898,24 +969,26 @@ print(desc)
         args = parser.parse_args()
         try:
             ws = MWorksheets(args.dir)
+            ws.expandcmds()
         except Exception:
             traceback.print_exc()
+            return
         at="files"
-        print(at)
-        (d_params, d_defaults, d_desc) = ws.paramsCmd(None,at)
         outputs = "directory.files.pbx"
+        (d_params, d_defaults, d_desc) = ws.paramsCmd(None,at)
         cmd = ws.getCmd(outputs)
-        print(cmd)
+        print("debug "+str(cmd))
         (params, selected, description) = ws.paramsCmd(cmd,at)
+        print("selected:"+str(selected))
         print("params")
         print(d_params)
         print(params)
         print("selected")
         print(d_defaults)
         print(selected)
-        for title in ws.titles():
+        for idx, title in enumerate(ws.titles()):
             print("Sheet:" + title)
-            for cmd in ws.sheet(title)["cmds"]:
+            for cmd in ws.sheet(ws.uuidAtIdx(idx))["cmds"]:
                 print("      " + cmd["cmd"] + ":" + str(ws.cmdFeed(cmd)))
         print("Feeds ready to run")
         for feed in ws.feeds:

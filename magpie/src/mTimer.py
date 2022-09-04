@@ -20,22 +20,34 @@ if platform.python_version_tuple() < ('3', '6', '9'):
 
 class mTimer():
     def __init__(self, duration: int):
-        self.debug = False
         self.timers={}
         self.dur = duration
 
     def start(self, k:str, v: any = None) -> None:
-        if self.debug:
-            print(" timing start "+k+" "+str(self.dur))
+        if k in self.timers:
+            return
         self.timers[k] = (time() + self.dur, v)
 
     def stop(self, k: str) -> bool:
-        if self.debug:
-            print(" timing stop "+k, flush=True)
-        if self.times.get(k,None) == None:
+        try:
+            del self.timers[k]
+        except:
             return False
-        del self.timers[k]
         return True
+
+    def get(self, k: str) -> any:
+        return self.timers.get(k,None)
+
+    def getStop(self, k: str) -> any:
+        """ Stops timer and return the value for the stopped timer, or None when timer does not exist. """
+        retval = self.get(k)
+        self.stop(k)
+        return retval
+
+    def walk(self) -> [(str, bool, any)]:
+        """ Not a generator to allow stop within a loop over walk(). """
+        t = time()
+        return [(k, (t > v[0]), v[1]) for k, v in self.timers.items()]
 
     def expired(self) -> (str, any):
         t = time()
@@ -43,8 +55,6 @@ class mTimer():
         for k, v in self.timers.items():
             if v[0] > t: # Dict maintains order of insert.
                 break
-            if self.debug:
-                print(" Expire "+k+" at "+str(t)+" for "+str(v[0])+" at "+str(t))
             expired.append((k,v[1]))
         for k, v in expired:
             yield (k,v)
@@ -54,29 +64,33 @@ class mTimer():
     def main():
         # Test the module.
         t = mTimer(1)
-        t.debug = False
-        start = time()
         test = [("1",1.1),("2",1.2),("3",1.3),("4",1.4),("5",1.5),("6",1.6)]
+        start = time()
+        print("Starting timers with a .1 interval")
         for v in test:
             sleep(0.1)
             t.start(v[0],v[1])
-
         for v in test:
-            timeout=False
+            print("TEST")
+            print(v)
+            timeout = False
             while not timeout:
-                sleep(0.1)
-                d = round(time() - start,1)
-                for e in t.expired():
-                    timeout=True
-                    (ek, ev) = e
-                    if ev != d:
-                        raise Exception("Error wrong expiration dur "+str(ev)+" != "+str(d))
-                    if ek != v[0]:
-                        raise Exception("Error wrong expiration key "+ek+" != "+v[0])
-                    if d > v[1]:
-                        raise Exception("Error no expiration "+str(ev)+" != "+str(d))
+                for (ek, ev) in t.expired():
+                    timeout = True
+                    d = round(time() - start,1)
+                    try:
+                        if ev != d:
+                            raise Exception("Error : expected dur="+str(ev)+" actual="+str(d))
+                        if ek != v[0]:
+                            raise Exception("Error wrong expiration key "+ek+" != "+v[0])
+                        if d > v[1]:
+                            raise Exception("Error no expiration "+str(ev)+" != "+str(d))
+                    except Exception as e:
+                        print(e)
                     print("Pass "+ek+" expired in "+str(d))
+                if not timeout:
+                    sleep(0.1)
 
-        
+
 if __name__ == "__main__":
     mTimer.main()

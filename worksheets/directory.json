@@ -1,9 +1,13 @@
 {
-    "cde66089-fda0-4e5d-bd3f-d25c417b9adc": {
-        "06a44999-5125-44d8-98bf-726e4eac9b0c": {
+    "name": "directory",
+    "uuid": "cde66089-fda0-4e5d-bd3f-d25c417b9adc",
+    "version": "1",
+    "cmds": [
+        {
+            "uuid": "06a44999-5125-44d8-98bf-726e4eac9b0c",
             "version": "1",
             "cmd": "files",
-            "params": {
+            "files": {
                 "root": "directory.files",
                 "path": {
                     "path": "test/Hallelulajah/data",
@@ -19,46 +23,51 @@
                     ]
                 }
             }
-        }, "75c517a2-bf77-4bdf-a889-68eb7fc70131": {
+        }, {
+            "uuid": "75c517a2-bf77-4bdf-a889-68eb7fc70131",
             "version": "1",
             "cmd": "loadf",
-            "params": {
+            "loadf": {
                 "files": "directory.files.attributes",
                 "feed": "directory.attributes",
                 "schema": {"file": {"feed": "directory.files.schema", "filetype": {"oracleTable": "ATTRIBUTES"} } },
                 "fstats": "directory.attributes.stats"
             }
-        }, "562dca73-5701-4775-9000-43db6cf4ad30": {
+        }, {
+            "uuid": "562dca73-5701-4775-9000-43db6cf4ad30",
             "version": "1",
             "cmd": "loadf",
-            "params": {
+            "loadf": {
                 "files": "directory.files.company",
                 "feed": "directory.company",
                 "schema": {"file": {"feed": "directory.files.schema", "filetype": {"oracleTable": "COMPANY"} } },
                 "fstats": "directory.company.stats"
             }
-        }, "b41344d6-971d-4f8d-8221-7d387092fe88": {
+        }, {
+            "uuid": "b41344d6-971d-4f8d-8221-7d387092fe88",
             "version": "1",
             "cmd": "loadf",
-            "params": {
+            "loadf": {
                 "files": "directory.files.country",
                 "feed": "directory.country",
                 "schema": {"file": {"feed": "directory.files.schema", "filetype": {"oracleTable": "COUNTRY"} } },
                 "fstats": "directory.country.stats"
             }
-        }, "b51bf327-ca6e-4be2-a9ae-39df620b874c": {
+        }, {
+            "uuid": "b51bf327-ca6e-4be2-a9ae-39df620b874c",
             "version": "1",
             "cmd": "loadf",
-            "params": {
+            "loadf": {
                 "files": "directory.files.pbx",
                 "feed": "directory.pbx",
                 "fstats": "stats.pbx",
                 "schema": {"file": { "feed": "directory.files.schema", "filetype": {"oracleTable": "PBX"} } } 
             }
-        }, "a3dfc98d-e442-4aa4-85ad-0d53e37e4d64": {
+        }, {
+            "uuid": "a3dfc98d-e442-4aa4-85ad-0d53e37e4d64",
             "version": "1",
             "cmd": "expand",
-            "params": {
+            "expand": {
                 "feed": "directory.pbx.telephone",
                 "input": "directory.pbx",
                 "join": {
@@ -77,24 +86,26 @@
                     ]
                 }
             }
-        }, "e0b4202e-a8d2-4de9-8c3c-e81da539ca33": {
+        }, {
+            "uuid": "e0b4202e-a8d2-4de9-8c3c-e81da539ca33",
             "version": "1",
             "cmd": "alert",
-            "params": {
+            "alert": {
                 "input": "directory.files.new",
                 "sumtype": "SUM",
                 "email": "{EMAIL}",
                 "period": 60
             }
-        }, "d553f1e6-a4ba-48e6-a0ba-90b8d62a86f5": {
+        }, {
+            "uuid": "d553f1e6-a4ba-48e6-a0ba-90b8d62a86f5",
             "version": "1",
             "cmd": "alert",
-            "params": {
+            "alert": {
                 "feed": "directory.alerts",
                 "sumtype": "SUM",
                 "email": "{EMAIL}",
                 "period": 60
             }
         }
-    }
+    ]
 }

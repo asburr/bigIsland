@@ -10,8 +10,10 @@
 # 
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
 #
-from hallelujah.root import RootHJC
-from hallelujah.cmds.files import Files, Test
+from root import RootHJC
+from cmds.files import Files
+from cmds.test import Test
+from magpie.src.mlogger import MLogger
 
 class Jah(RootHJC):
     """
@@ -22,8 +24,13 @@ class Jah(RootHJC):
         "test": Test,
         "files": Files
     }
+
+    @staticmethod
+    def args(cwd: str, uuid:str, congregationPort: int, halleludir: str):
+        return [cwd, uuid, congregationPort, halleludir]
+
     def __init__(self, cwd: str, uuid:str, congregationPort: int, halleludir: str):
-        super().__init__(cwd=cwd, uuid=uuid, halleludir=halleludir, title="j", congregationPort=congregationPort, debug=True)
+        super().__init__(cwd=cwd, uuid=uuid, halleludir=halleludir, title="j", congregationPort=congregationPort)
         self.processCmd.update({
             "_streamReq_": self.streamreq,
             "_streamCanReq_": self.streamcanreq,
@@ -59,6 +66,8 @@ class Jah(RootHJC):
         })
 
     @staticmethod
-    def child_main(cwd: str, uuid: str, congregationPort: int, halleludir: str):
+    def child_main(cwd: str, uuid: str, congregationPort: int, halleludir: str, debug: bool=False):
+        if debug:
+            MLogger.init("DEBUG")
         j = Jah(cwd, uuid, congregationPort, halleludir)
         j.poll()

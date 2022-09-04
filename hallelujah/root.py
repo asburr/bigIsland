@@ -27,12 +27,13 @@ class RootHJ():
  port. Periodically call tick(). Touches the ProcessFile, the last
  modified time being an indication to Congregation that this process is alive.
     """
-    def __init__(self, cwd: str, halleludir: str, title: str, port: int = 0):
+    def __init__(self, cwd: str, halleludir: str, title: str, port: int):
         os.chdir(cwd)
         self.log = MLogger.getLogger()
         self.host = socket.gethostname()
         self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.s.settimeout(5.0)
+        self.socket_timeout = 5.0
+        self.s.settimeout(self.socket_timeout)
         self.s.bind((self.host, port))
         self.port = self.s.getsockname()[1]
         self.localAddress = (self.host, self.port)
@@ -48,19 +49,19 @@ class RootHJ():
 
     def poll(self) -> None:
         if MLogger.isDebug():
-            MLogger.debug(self.title+" start " + str(self.host)+":"+str(self.port),flush=True)
+            self.log.debug(self.title+" start " + str(self.host)+":"+str(self.port))
         self.processCmd[""]({})  # Run the start cmd.
         didSomething = False
         while not self.stop:
             if didSomething:
                 didSomething = False
                 if MLogger.isDebug():
-                    MLogger.log(self.title+" waiting")
+                    self.log.debug(self.title+" waiting")
             for (key, content, eom) in self.mudp.recv():
                 didSomething = True
                 cmd = json.loads(content)
                 if MLogger.isDebug():
-                    MLogger.log("Poll:"+str(cmd))
+                    self.log.debug("Poll:"+str(cmd))
                 if "__remote_address__" not in cmd:
                     # The remote_address is the originator and is stored in
                     # the command, so the response is sent to the originator.
@@ -73,12 +74,12 @@ class RootHJ():
                 if n == None:
                     raise Exception("Unexpected message " + str(cmd))
                 if MLogger.isDebug():
-                    MLogger.log(self.title+" recv "+str(key)+" "+str(cmd))
+                    self.log.debug(self.title+" recv "+str(key)+" "+str(cmd))
                 n(cmd)
             if not didSomething and not self.tick():
                 sleep(0.1)
         if MLogger.isDebug():
-            MLogger.log(self.title+" stopped")
+            self.log.debug(self.title+" stopped")
 
     def tick(self) -> bool:
         """Placeholder for any periodic work. Return True when work was done. """
@@ -117,7 +118,7 @@ class RootHJ():
                 addr = (self.host,port)
                 self.sendReq("_STOP_", {},addr)
             if MLogger.isDebug():
-                MLogger.log(self.title+" Remove "+fn)
+                self.log.debug(self.title+" Remove "+fn)
             os.remove(fn)
 
     def createProcessfile(self, fn: str, cmd: dict) -> bool:
@@ -126,7 +127,7 @@ class RootHJ():
                 self.rmProcessFile(fn)
             else:
                 if MLogger.isDebug():
-                    MLogger.log(self.title+" "+fn+" exists "+fn)
+                    self.log.debug(self.title+" "+fn+" exists "+fn)
                 (c,p) = self.readProcessFile(fn)
                 if c == cmd:
                     return False  # Process already running.
@@ -134,16 +135,23 @@ class RootHJ():
         with open(fn,"w") as f:
             line = json.dumps(cmd)+"\n"
             if MLogger.isDebug():
-                MLogger.log(self.title+" "+fn+" writing "+line)
+                self.log.debug(self.title+" "+fn+" writing "+line)
             f.write(line)
         return True # Created a new process file.
 
     def isExpiredProcessFile(self, fn: str) -> bool:
-        return (time() - os.path.getmtime(fn)) > self.mtimeKeepAlive
+        d = time() - os.path.getmtime(fn)
+        l = self.socket_timeout*3
+        if d > l:
+            if MLogger.isDebug():
+                self.log.debug(fn+" processfile expired "+str(d)+" "+str(l))
+            return True
+        else:
+            return False
 
     def sendReq(self, title: str, params: dict, remoteAddr: (str,int)) -> None:
         if MLogger.isDebug():
-            MLogger.log(self.title+" sendReq "+title+" to "+str(remoteAddr))
+            self.log.debug(self.title+" sendReq "+title+" to "+str(remoteAddr))
         self.mudp.send(
             content=json.dumps({"cmd": title, "params": params}),
             eom=True,
@@ -154,7 +162,7 @@ class RootHJ():
         remoteAddr = req["__remote_address__"]
         requestId = req["__request_id__"]
         if MLogger.isDebug():
-            MLogger.log(self.title+" sendCfm "+title+" to "+str(remoteAddr)+":"+str(requestId))
+            self.log.debug(self.title+" sendCfm "+title+" to "+str(remoteAddr)+":"+str(requestId))
         self.mudp.send(
             content=json.dumps({"cmd": title, "params": params}),
             eom=True,
@@ -168,7 +176,7 @@ class RootHJC(RootHJ):
   RootHJC: Root for Hallelu and Jah; those with a command. Reads command from
   file.
     """
-    def __init__(self, cwd: str, uuid: str, halleludir: str, title: str, port: int = 0, congregationPort: int = 0):
+    def __init__(self, cwd: str, uuid: str, halleludir: str, title: str, congregationPort: int, port: int = 0):
         super().__init__(cwd, halleludir, title, port=port)
         self.id = uuid
         self.congregation_addr = (self.host, congregationPort)
@@ -187,7 +195,7 @@ class RootHJC(RootHJ):
             j = {"port": self.port}
             line = json.dumps(j)+"\n"
             if MLogger.isDebug():
-                MLogger.log(self.title+" "+self.fn+" add:"+line)
+                self.log.debug(self.title+" "+self.fn+" add:"+line)
             f.write(line)
         (cmd,port) = self.readProcessFile(self.fn)
         if cmd != self.cmd:

@@ -18,7 +18,6 @@ import socket
 import argparse
 import traceback
 import json
-import os
 try:
     import wx
     import wx.grid
@@ -30,7 +29,7 @@ except Exception:
     exit(1)
 from magpie.src.musage import MUsage
 from magpie.src.mudp import MUDP, MUDPBuildMsg
-from magpie.src.mworksheets import MWorksheets
+from magpie.src.mworksheets import MWorksheets, MCmd
 from sheet.QueryParams import QueryParams
 from sheet.Grid import WiGrid
 
@@ -111,9 +110,7 @@ class WiWS(wx.Frame):
             self.Layout()
             self.Show()
             raise e
-        with open(os.path.join(cfg["hdir"],"hall_summit.json"), "r") as f:
-            j = json.load(f)
-            self.halleluAddr = (j["ip"], j["port"])
+        self.congregation = cfg["congregation"]
         boxSizer = wx.BoxSizer(wx.VERTICAL)
         self.panel = wx.Panel(self)
         self.cmd = None
@@ -141,31 +138,36 @@ class WiWS(wx.Frame):
         self.mudp = MUDP(s, skipBad=False)
 
     def on_addcmd(self, event):
-        wsn = self.ws_selection.GetValue()
+        wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
         QueryParams(parent=self, title="New command for " + wsn,
              style=wx.OK | wx.NO, params={"select command": self.ws.cmd_titles()}, selected={}, verify=None, sample=None, descriptions=self.ws.cmd_descriptions(), on_close=self.wsaddcmd_close, getOptions=self.ws.paramsCmd)
+        event.Skip(False)
 
     def wsaddcmd_close(self, event):
-        wsn = self.ws_selection.GetValue()
+        wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
         qp = event.GetEventObject()
         if qp.res != wx.OK:
+            event.Skip(False)
             return
         (cmdname, typ) = qp.getValue("select command", "str")
         if not cmdname:
+            event.Skip(False)
             return
         (params, selected, desc) = self.ws.paramsCmd(cmd=None, at=cmdname)
         QueryParams(parent=self, title="New command for " + wsn,
              style=wx.OK | wx.NO, params=params, selected=selected, verify=self.wsaddedcmd_verify, sample=None, descriptions=desc, on_close=self.wsaddedcmd_close, data=cmdname, getOptions=self.ws.paramsCmd)
+        event.Skip(False)
 
     def wsaddedcmd_verify(self, qp: QueryParams) -> str:
-        wsn = self.ws_selection.GetValue()
+        wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
         selected = qp.getSelected()
         return self.ws.updateCmd(wsn=wsn, cmd=None, selected=selected)
 
     def wsaddedcmd_close(self, event):
-        wsn = self.ws_selection.GetValue()
+        wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
         qp = event.GetEventObject()
         if qp.res != wx.OK:
+            event.Skip(False)
             return
         # cmdname = qp.data
         selected = qp.getSelected()
@@ -175,29 +177,35 @@ class WiWS(wx.Frame):
                 error,
                 "",
                 wx.OK, self)
+            event.Skip(False)
             return
         self.grid.update(self.titles, self.ws.inputCmdOutput(wsn))
         self.Show()
+        event.Skip(False)
 
     def ws_selected(self, event):
-        wsn = self.ws_selection.GetValue()
-        if wsn == "new worksheet":
+        print(event)
+        if self.ws_selection.GetValue() == "new worksheet":
             self.addButton.Hide()
             QueryParams(parent=self, title="New worksheet name",
                  style=wx.OK | wx.NO, params={"Worksheet name": "str"}, selected={}, verify=None, sample=None, descriptions={}, on_close=self.wsname_close, getOptions=self.ws.paramsCmd)
         else:
+            wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
             self.addButton.Show()
             self.grid.update(self.titles, self.ws.inputCmdOutput(wsn))
             self.panel.Layout()
             self.Layout()
             self.Show()
+        event.Skip(False)
 
     def wsname_close(self, event) -> None:
         qp = event.GetEventObject()
         if qp.res != wx.OK:
+            event.Skip()
             return
         (wsn, typ) = qp.getValue("Worksheet name", "str")
         if not wsn:
+            event.Skip()
             return
         error = self.ws.addSheet(wsn)
         if error:
@@ -205,6 +213,7 @@ class WiWS(wx.Frame):
                 "Faild: "+error,
                 "",
                 wx.OK, self)
+            event.Skip()
             return
         self.ws_selection.Clear()
         self.ws_selection.Append(self.ws.titles())
@@ -214,37 +223,33 @@ class WiWS(wx.Frame):
         event.Skip()
 
     def ws_verify(self, qp: QueryParams) -> str:
-        wsn = self.ws_selection.GetValue()
-        cmd = self.ws.getCmd(outputs=qp.data)
+        wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
+        cmd = self.ws.getCmdUuid(uuid=qp.data)
         return self.ws.updateCmd(wsn=wsn, cmd=cmd, selected=qp.getSelected())
 
     def ws_sample(self, title:str) -> None:
-        WiSampleGrid(title=title, remoteAddr=self.halleluAddr, mudp=self.mudp)
+        WiSampleGrid(title=title, remoteAddr=self.congregation, mudp=self.mudp)
 
     def OnRowClick(self, event):
+        print(event)
         row = event.GetRow()
         if row == -1:
+            event.Skip(False)
             return
-        wsn = self.ws_selection.GetValue()
-        outputs = self.grid.grid.GetCellValue(row, 2)
-        if len(outputs) > 0:
-            self.cmd=self.ws.getCmd(outputs);
-        else:
-            cmdname = self.grid.grid.GetCellValue(row, 1)
-            for j in self.ws.sheet(wsn):
-                if cmdname in j:
-                    self.cmd = j
-                    break
-        if self.cmd is None:
-            return
-        cmdname = self.ws.cmdName(self.cmd)
+        # outputs = self.grid.grid.GetCellValue(row, 2)
+        wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
+        self.cmd = self.ws.sheetCmds(wsn)[row]
+        cmdname = MCmd.name(self.cmd)
+        uuid = MCmd.uuid(self.cmd)
         (params, selected, descriptions) = self.ws.paramsCmd(cmd=self.cmd, at=cmdname)
-        QueryParams(parent=self, title=wsn+":"+cmdname,
+        QueryParams(parent=self, title=wsn+":"+uuid,
              style=wx.OK | wx.CANCEL | wx.CAPTION | wx.NO, params=params,
-             selected=selected, descriptions=descriptions, verify=self.ws_verify, sample=self.ws_sample, on_close=self.ws_close, data=outputs, getOptions=self.ws.paramsCmd)
+             selected=selected, descriptions=descriptions, verify=self.ws_verify, sample=self.ws_sample, on_close=self.ws_close, data=uuid, getOptions=self.ws.paramsCmd)
+        event.Skip(False)
 
     def ws_close(self, event) -> None:
-        wsn = self.ws_selection.GetValue()
+        """ Close edit command window. """
+        wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
         qp = event.GetEventObject()
         if qp.res == wx.OK:
             errors = self.ws_verify(qp)
@@ -253,8 +258,9 @@ class WiWS(wx.Frame):
                     "Faild: "+errors,
                     "",
                     wx.OK, self)
+                event.Skip()
                 return
-            cmd = self.ws.getCmd(outputs=qp.data)
+            cmd = self.ws.getCmdUuid(uuid=qp.data)
             self.ws.purgeCmd(cmd)
             self.grid.update(self.titles, self.ws.inputCmdOutput(wsn))
         elif qp.res == wx.CANCEL:
@@ -266,13 +272,16 @@ class WiWS(wx.Frame):
     def main():
         parser = argparse.ArgumentParser(description="Wi")
         parser.add_argument('--dir', help="worksheet dir")
-        parser.add_argument('--hdir', help="hall dir")
+        parser.add_argument('--ip', help="Congregation IP address, default is the loop around")
+        parser.add_argument('--port', help="Congregation Port number, default is 1234")
         parser.add_argument('-d', '--debug', help="activate debugging", action="store_true")
         args = parser.parse_args()
         if args.dir is None:
             args.dir = "worksheets"
-        if args.hdir is None:
-            args.hdir = "halls"
+        if args.ip is None:
+            args.ip = "127.0.0.1"
+        if args.port is None:
+            args.port = "1234"
         app = wx.App(0)
         # TODO; change the iconized image.
         # import Tkinter
@@ -280,7 +289,7 @@ class WiWS(wx.Frame):
         # root = Tk()
         # img = Tkinter.Image("photo", file="appicon.gif")
         # root.tk.call('wm','iconphoto',root._w,img)
-        cfg = {"debug": args.debug, "wsdir": args.dir, "hdir": args.hdir}
+        cfg = {"debug": args.debug, "wsdir": args.dir, "congregation": (args.ip, args.port)}
         try:
             WiWS(cfg)
         except Exception:

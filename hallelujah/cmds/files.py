@@ -10,7 +10,7 @@
 # 
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
 #
-from hallelujah.cmds.cmd import Cmd
+from cmd import Cmd
 import os.path
 import json
 import re

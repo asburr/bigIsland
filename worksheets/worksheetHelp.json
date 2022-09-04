@@ -15,12 +15,9 @@
                  "type": "path", "default": ".",
                  "desc": "Path to load files from. Default is current directory."
             }, "order": {
-                 "type": "choice", "default": "mnewest",
-                 "desc": "Order of file name retrieval",
-                 "mnewest": {
-                     "type": "bool", "default": true,
-                     "desc": "Newest modified file first"
-                 }
+                 "type": "str", "default": "mnewest",
+                 "choice": ["mnewest", "moldest"],
+                 "desc": "Order of file name retrieval"
             }, "depth": {
                 "type": "int", "default": 0,
                 "desc": "Specifies the depth of subdir searching under input dir. Values are: no subdir(0); unlimited depth(-1); or, a depth(N)"
@@ -286,12 +283,59 @@
             "type": "int", "default": 86400,
             "desc": "This is the period in second in between the email alerts."
         }
-    }, "_usage_": {
-        "type": "bool",
-        "desc": "Internal request for host usage from a summit Hallelu."
-    }, "_usage_response_": {
+    }, "address.macro": {
         "type": "composite",
-        "desc": "Host usage.",
+        "desc": "IP address and port",
+        "ip": {
+            "type": "str",
+            "desc": "Host name or ip addres."
+        },
+        "port": {
+            "type": "int",
+            "desc": "Port"
+        }
+    }, "_HalleluReq_": {
+        "type": "bool",
+        "desc": "Request is sent to Congregation and is redirected towards Hallelujah."
+    }, "_HalleluCfm_": {
+        "type": "composite",
+        "desc": "Cfm redirects the request towards the Hallelujah, or returns the address of the Hallelujah.",
+        "hallelujah": {
+            "type": "address.macro", "default": null,
+            "desc": "Address of Hallelujah"
+        }, "redirect": {
+            "type": "address.macro", "default": null,
+            "desc": "Redirection to next Congregation on the path to Hallelujah"
+        }
+    }, "_CongregationReq_": {
+        "type": "bool",
+        "desc": "Add Congregation. The request is sent to Hallelujah. Request is redirected towards the Congregation where the Congregation is added."
+    }, "_CongregationCfm_": {
+        "type": "composite",
+        "desc": "Cfm redirects the request towards the Congregation with the shortest depth.",
+        "congregation": {
+            "type": "address.macro", "default": null,
+            "desc": "Address of Congregation where add occurred."
+        }, "redirect": {
+            "type": "address.macro", "default": null,
+            "desc": "Redirection to next Congregation on the path to where the add occurs."
+        }
+    }, "_CongregationSizeReq_": {
+        "type": "composite",
+        "desc": "Request the number of the congregations on the left and right of the node"
+    }, "_CongregationSizeCfm_": {
+        "type": "composite",
+        "desc": "Number of congregations on the left and right of the node",
+        "size": {
+            "type": "int",
+            "desc": "Count"
+        }
+    }, "_usageReq_": {
+        "type": "bool",
+        "desc": "Hallelujah requests host usage from Congregation."
+    }, "_usageCfm_": {
+        "type": "composite",
+        "desc": "Congregation to Hallelujah, host usage response.",
         "host": {
             "type": "str",
             "desc": "Name of the host"
@@ -307,86 +351,188 @@
         }, "timestamp": {
             "type": "str",
             "desc": "msdatetime.strftime() when usage was take"
+        }, "otherHosts": {
+            "type": "address.macro", "default": null,
+            "desc": "List of other hosts that this Congregation is aware of."
         }
-    }, "_request_cancel_": {
+    }, "_conReq_": {
         "type": "composite",
-        "desc": "Cancel the request. Sent by the client api when the client cancels the request and further received content for this request is being ignored by the api.",
-        "requestId": {
-            "type": "int",
-            "desc": "The request's id"
+        "desc": "Sent to Congregation, from user, to get address of Hallelujah"
+    }, "_conCfm_": {
+        "type": "address.macro", "desc": "Hallelujah"
+    }, "_cmdInd_": {
+        "type": "composite",
+        "desc": "Sent from user to Hallelujah to find the first command in the database, or to Congregation to find the next command. Find by sheetUuid, cmdUuid and cmdVersion, or feed.",
+        "sheetUuid": {
+            "type": "str", "default": null,
+            "desc": "Optional sheet UUID"
+        },
+        "cmdUuid": {
+            "type": "str", "default": null,
+            "desc": "Optional cmd UUID"
+        },
+        "cmdVersion": {
+            "type": "str", "default": null,
+            "desc": "specific version of a command"
+        },
+        "feed": {
+            "type": "str", "default": null,
+            "desc": "Name of the feed served by the cmd"
         }
-    }, "_sheetsReq_": {
+    }, "_cmdRsp_": {
         "type": "composite",
-        "desc": "Gets uuid and filename for all of the sheets"
-    }, "_sheetsCfm_": {
-        "type": "composite",
-        "desc": "list of sheets",
-        "sheets": {
-            "type": "listComposites", "desc": "List of sheets",
+        "desc": "Response from Congregation about the next command matching the criterior in cmdInd.",
+        "cmd": {
+            "type": "composite", "default": null,
+            "desc": "Cmd is optional, present when addressed has a command that matches the criterior",
             "uuid": {
+                "type": "str",
+                "desc": "cmd UUID"
+            },
+            "sheetUuid": {
                 "type": "str",
                 "desc": "sheet UUID"
             },
-            "filename": {
+            "version": {
                 "type": "str",
-                "desc": "The file name that holds the sheet"
+                "desc": "Version of the command"
+            },
+            "status": {
+                "type": "str",
+                "choice": ["old version", "deleted"],
+                "desc": "Status of this version of the command."
+            },
+            "cmd": {
+                "type": "any",
+                "desc": "The command"
+            },
+            "Congregation": {
+                "type": "address.macro",
+                "desc": "Address of the Congregation where cmdReq are sent to update this command"
             }
-        }
-    }, "_sheetReq_": {
-        "type": "composite",
-        "desc": "Get a sheet",
-        "uuid": {
-            "type": "str",
-            "desc": "sheet UUID"
-        }
-    }, "_sheetCfm_": {
-        "type": "composite",
-        "desc": "Copy of commands in the sheet",
-        "uuid": {
-            "type": "str",
-            "desc": "cmd UUID"
         },
-        "version": {
-            "type": "str",
-            "desc": "cmd version"
+        "sheet": {
+            "type": "composite", "default": null,
+            "desc": "Sheet is optional, present when addressed has the sheet that matches the criterior",
+            "sheetUuid": {
+                "type": "str",
+                "desc": "sheet UUID"
+            },
+            "version": {
+                "type": "str",
+                "desc": "Version of the command"
+            },
+            "name": {
+                "type": "str",
+                "desc": "Name for the sheet"
+            }
         },
-        "cmd": {
-            "type": "any",
-            "desc": "cmd"
+        "Congregation": {
+            "type": "address.macro",
+            "desc": "Address of the Congregation where to send another cmdInd for the next command"
         }
     }, "_cmdReq_": {
         "type": "composite",
-        "desc": "Update a cmd",
-        "sheetUuid": {
-            "type": "str",
-            "desc": "sheet UUID"
-        },
+        "desc": "Sent by user to Congregation where the cmd is located to update a command, or sent to any Congregation to create a new command.",
         "cmdUuid": {
             "type": "str",
             "desc": "cmd UUID"
         },
         "version": {
             "type": "str",
-            "desc": "Version of the command prior to the update"
+            "desc": "Version of the command to update. Zero(0) when creating a new command."
+        },
+        "newVersion": {
+            "type": "str",
+            "desc": "New version for the updated command."
+        },
+        "sheetUuid": {
+            "type": "str",
+            "desc": "sheet UUID"
         },
         "cmd": {
             "type": "any",
-            "desc": "The updated command"
+            "desc": "New command, or new version, or empty {} to delete the command"
         }
     }, "_cmdCfm_": {
         "type": "composite",
-        "desc": "_cmdCfm_",
+        "desc": "Response to _cmdReq_",
+        "Congregation": {
+            "type": "address.macro", "default": null,
+            "desc": "Address of the Congregation to re-send this request"
+        },
         "status": {
             "type": "str",
-            "choice": ["complete", "wrong version"],
+            "choice": ["redirect", "deleted", "created", "updated", "newer version", "no change", "timeout"],
             "desc": "Update status."
         }
+    }, "_sheetInd_": {
+        "type": "composite",
+        "desc": "Sent from user to Hallelujah to find the first sheet in the database, or to Congregation to find the next sheet."
+    }, "_sheetRsp_": {
+        "type": "composite",
+        "desc": "Response to _sheetInd_",
+        "sheetUuid": {
+            "type": "str",
+            "desc": "sheet UUID"
+        },
+        "version": {
+            "type": "str",
+            "desc": "Version of the old sheet that's being updated."
+        },
+        "name": {
+            "type": "str",
+            "desc": "Name is all a sheet has"
+        },
+        "Congregation": {
+            "type": "address.macro", "default": null,
+            "desc": "Address of the Congregation where to send another sheetInd for the next sheet, or null"
+        }
+    }, "_sheetReq_": {
+        "type": "composite",
+        "desc": "Sent from user to Congregation where the sheet is located to update a sheet.",
+        "sheetUuid": {
+            "type": "str",
+            "desc": "sheet UUID"
+        },
+        "version": {
+            "type": "str",
+            "desc": "Version of the old sheet that's being updated."
+        },
+        "name": {
+            "type": "str",
+            "desc": "New name for sheet"
+        }
+    }, "_sheetCfm_": {
+        "type": "composite",
+        "desc": "Response to _sheetReq_",
+        "Congregation": {
+            "type": "address.macro", "default": null,
+            "desc": "Address of the Congregation to re-send this request"
+        },
+        "status": {
+            "type": "str",
+            "choice": ["redirect", "deleted", "created", "updated", "wrong version", "no change", "timeout"],
+            "desc": "Update status."
+        }
+    }, "_HalleluReq_": {
+        "type": "_cmdReq_",
+        "desc": "Request to Congregation, from Hallelujah, to create a Hallelu process"
+    }, "_HalleluCfm_": {
+        "type": "_cmdCfm_",
+        "desc": "Confirmation from congregation of creation of a Hallelu"
+    }, "_JahReq_": {
+        "type": "_cmdReq_",
+        "desc": "Request to Congregation, from Hallelu, to create a Jah process"
+    }, "_JahCfm_": {
+        "type": "address.macro",
+        "desc": "Address of the Jah created from the _JahReq_"
     }, "_streamReq_": {
         "type": "composite",
-        "desc": "_streamReq_ is sent by the Receiver to the Hallelu to start a stream of data from the Hallelu's Jah. Same Message is forwarded to each Jah by Hallelu, to start stream processing which runs contineously building dataCfm messages so they are ready to be transmitted to the Receiver as soon as asked.",
+        "desc": "_streamReq_ is sent to Hallelu, from other Hallelu or User, to start a stream of data from the Hallelu's Jah. Same Message is forwarded to each Jah, to start stream processing which runs contineously building dataCfm messages so they are ready to be transmitted to the Receiver as soon _DatReq_.",
         "streamUuid": {
             "type": "str",
-            "desc": "stream UUID"
+            "desc": "Unique ID for this stream request"
         }, "feed": {
             "type": "feedRef", "default": null,
             "desc": "Name a feed to stream"
@@ -430,19 +576,12 @@
             "choice": ["success", "fail"],
             "desc": "State of stream"
         }, "jahs": {
-            "type": "listComposites", "default": null,
-            "desc": "Jahs",
-            "ip": {
-                "type": "str",
-                "desc": "Ip address"
-            }, "port": {
-                "type": "int",
-                "desc": "Port"
-            }
+            "type": "address.macro", "default": null,
+            "desc": "Jahs"
         }
     }, "_streamCanReq_": {
         "type": "composite",
-        "desc": "_streamCan_ is sent cancel the stream. By Receiver to Hallelu; By Hallelu to Jah.",
+        "desc": "_streamCan_ is streamReq_ is sent to Hallelu, from other Hallelu or User, to stop a stream of data from the Hallelu's Jah. Same Message is forwarded to each Jah.",
         "streamUuid": {
             "type": "str",
             "desc": "stream UUID"
@@ -454,9 +593,26 @@
             "type": "str",
             "desc": "stream UUID"
         }
+    }, "_streamTimeoutReq_": {
+        "type": "composite",
+        "desc": "_dataTimeoutReq_ is sent to a Hallelu, from other Hallelu or User, when the dataReq timeouts out to one of the Hallelu's Jah.",
+        "streamUuid": {
+            "type": "str",
+            "desc": "stream UUID"
+        }, "jah": {
+            "type": "address.macro",
+            "desc": "Jah that did not respond to dataReq."
+        }
+    }, "_streamTimeoutCfm_": {
+        "type": "composite",
+        "desc": "_dataTimeoutCfm_ is sent back to Receiver, and indicates the replacement Jah.",
+        "nxtJah": {
+            "type": "address.macro",
+            "desc": "The address of the replacement Jah, may be the same Jah for temporary problems."
+        }
     }, "_dataReq_": {
         "type": "composite",
-        "desc": "_dataReq_ is sent to a Jah.",
+        "desc": "_dataReq_ is sent, from Hallelu or User, to a Jah.",
         "streamUuid": {
             "type": "str",
             "desc": "stream UUID"
@@ -468,46 +624,11 @@
             "type": "any",
             "desc": "the data"
         }, "nxtJah": {
-            "type": "composite",
-            "desc": "Jah for next dataReq.",
-            "ip": {
-                "type": "str",
-                "desc": "Ip address"
-            }, "port": {
-                "type": "int",
-                "desc": "Port"
-            }
+            "type": "address.macro",
+            "desc": "Jah for next dataReq."
         }
-    }, "_dataTimeoutReq_": {
+    }, "test": {
         "type": "composite",
-        "desc": "_dataTimeoutReq_ is sent to a Hallelu when the dataReq timeouts out to Jah.",
-        "streamUuid": {
-            "type": "str",
-            "desc": "stream UUID"
-        }, "jah": {
-            "type": "composite",
-            "desc": "Jah that did not respond to dataReq.",
-            "ip": {
-                "type": "str",
-                "desc": "Ip address"
-            }, "port": {
-                "type": "int",
-                "desc": "Port"
-            }
-        }
-    }, "_dataTimeoutCfm_": {
-        "type": "composite",
-        "desc": "_dataTimeoutCfm_ is sent back to Receiver, and indicates the replacement Jah.",
-        "nxtJah": {
-            "type": "composite",
-            "desc": "The address of the replacement Jah, may be the same Jah for temporary problems.",
-            "ip": {
-                "type": "str",
-                "desc": "Ip address"
-            }, "port": {
-                "type": "int",
-                "desc": "Port"
-            }
-        }
+        "desc": "This comment returns the string:testing"
     }
 }
