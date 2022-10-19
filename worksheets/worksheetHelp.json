@@ -294,31 +294,36 @@
             "type": "int",
             "desc": "Port"
         }
-    }, "_HalleluReq_": {
+    }, "routing.macro": {
         "type": "bool",
-        "desc": "Request is sent to Congregation and is redirected towards Hallelujah."
-    }, "_HalleluCfm_": {
+        "desc": "Routing indicator for Request and Indication messages as they traverse the Congregations: (true) heading upwards, towards the summit Congregation; (false) heading downwards, towards the next Congregation on the left; and, (null) heading upwards, towards the next Congregation on the right."
+    }, "_ConReq_": {
         "type": "composite",
-        "desc": "Cfm redirects the request towards the Hallelujah, or returns the address of the Hallelujah.",
-        "hallelujah": {
-            "type": "address.macro", "default": null,
-            "desc": "Address of Hallelujah"
-        }, "redirect": {
-            "type": "address.macro", "default": null,
-            "desc": "Redirection to next Congregation on the path to Hallelujah"
+        "desc": "Congregation requests connection to another Congregation",
+        "routing": {
+            "type": "routing.macro"
+        },
+        "cluster": {
+            "type": "bool", "default": null,
+            "desc": "True when this ConReq is going toward the second Congregation in the cluster"
         }
-    }, "_CongregationReq_": {
-        "type": "bool",
-        "desc": "Add Congregation. The request is sent to Hallelujah. Request is redirected towards the Congregation where the Congregation is added."
-    }, "_CongregationCfm_": {
+    }, "_ConCfm_": {
         "type": "composite",
-        "desc": "Cfm redirects the request towards the Congregation with the shortest depth.",
-        "congregation": {
+        "desc": "Confirmation for ConReq.",
+        "routing": {
+            "type": "routing.macro"
+        },
+        "resend": {
             "type": "address.macro", "default": null,
-            "desc": "Address of Congregation where add occurred."
-        }, "redirect": {
-            "type": "address.macro", "default": null,
-            "desc": "Redirection to next Congregation on the path to where the add occurs."
+            "desc": "Resend is present when the final destination is not reached, and ConReq needs to be resent to this address to continue on its journey."
+        },
+        "cluster": {
+            "type": "list", "default": null,
+            "desc": "Congregation has been added to this cluster",
+            "Congregation": {
+                "type": "address.macro",
+                "desc": "Addresses of a Congregations in the cluster"
+            }
         }
     }, "_CongregationSizeReq_": {
         "type": "composite",
@@ -355,12 +360,7 @@
             "type": "address.macro", "default": null,
             "desc": "List of other hosts that this Congregation is aware of."
         }
-    }, "_conReq_": {
-        "type": "composite",
-        "desc": "Sent to Congregation, from user, to get address of Hallelujah"
-    }, "_conCfm_": {
-        "type": "address.macro", "desc": "Hallelujah"
-    }, "_cmdInd_": {
+    }, "cmdFilter.macro": {
         "type": "composite",
         "desc": "Sent from user to Hallelujah to find the first command in the database, or to Congregation to find the next command. Find by sheetUuid, cmdUuid and cmdVersion, or feed.",
         "sheetUuid": {
@@ -379,9 +379,27 @@
             "type": "str", "default": null,
             "desc": "Name of the feed served by the cmd"
         }
+    }, "_cmdInd_": {
+        "type": "composite",
+        "desc": "Request commands running in the database",
+        "filters": {
+            "type": "cmdFilter.macro",
+            "desc": "Filter used to select the command in cmdInd"
+        },
+        "routing": {
+            "type": "routing.macro"
+        },
+        "cmdUuid": {
+            "type": "str",
+            "desc": "The last cmd UUID received in cmdRsp."
+        }
     }, "_cmdRsp_": {
         "type": "composite",
         "desc": "Response from Congregation about the next command matching the criterior in cmdInd.",
+        "filters": {
+            "type": "cmdFilter.macro",
+            "desc": "Filter used to select the command in cmdInd"
+        },
         "cmd": {
             "type": "composite", "default": null,
             "desc": "Cmd is optional, present when addressed has a command that matches the criterior",
@@ -405,10 +423,6 @@
             "cmd": {
                 "type": "any",
                 "desc": "The command"
-            },
-            "Congregation": {
-                "type": "address.macro",
-                "desc": "Address of the Congregation where cmdReq are sent to update this command"
             }
         },
         "sheet": {
@@ -427,24 +441,27 @@
                 "desc": "Name for the sheet"
             }
         },
+        "routing": {
+            "type": "routing.macro"
+        },
         "Congregation": {
             "type": "address.macro",
-            "desc": "Address of the Congregation where to send another cmdInd for the next command"
+            "desc": "Address of the Congregation where to send another cmdInd for the next command. Or, towards the summit for the first comInd"
         }
     }, "_cmdReq_": {
         "type": "composite",
-        "desc": "Sent by user to Congregation where the cmd is located to update a command, or sent to any Congregation to create a new command.",
+        "desc": "Sent by user to Congregation where the cmd is located to update a command, or send to any Congregation to create a new command.",
         "cmdUuid": {
             "type": "str",
             "desc": "cmd UUID"
         },
         "version": {
             "type": "str",
-            "desc": "Version of the command to update. Zero(0) when creating a new command."
+            "desc": "Version of the command to update."
         },
         "newVersion": {
-            "type": "str",
-            "desc": "New version for the updated command."
+            "type": "str", "Default": null,
+            "desc": "New version for the updated command. Not present for a new command."
         },
         "sheetUuid": {
             "type": "str",
@@ -453,40 +470,32 @@
         "cmd": {
             "type": "any",
             "desc": "New command, or new version, or empty {} to delete the command"
+        },
+        "routing": {
+            "type": "routing.macro"
         }
     }, "_cmdCfm_": {
         "type": "composite",
         "desc": "Response to _cmdReq_",
+        "routing": {
+            "type": "routing.macro"
+        },
         "Congregation": {
             "type": "address.macro", "default": null,
             "desc": "Address of the Congregation to re-send this request"
         },
         "status": {
             "type": "str",
-            "choice": ["redirect", "deleted", "created", "updated", "newer version", "no change", "timeout"],
+            "choice": ["redirect", "inactive", "updated", "newer version", "no change", "timeout", "feed in use"],
             "desc": "Update status."
-        }
-    }, "_sheetInd_": {
-        "type": "composite",
-        "desc": "Sent from user to Hallelujah to find the first sheet in the database, or to Congregation to find the next sheet."
-    }, "_sheetRsp_": {
-        "type": "composite",
-        "desc": "Response to _sheetInd_",
-        "sheetUuid": {
-            "type": "str",
-            "desc": "sheet UUID"
         },
-        "version": {
-            "type": "str",
-            "desc": "Version of the old sheet that's being updated."
-        },
-        "name": {
-            "type": "str",
-            "desc": "Name is all a sheet has"
-        },
-        "Congregation": {
-            "type": "address.macro", "default": null,
-            "desc": "Address of the Congregation where to send another sheetInd for the next sheet, or null"
+        "feedsInUse": {
+            "type": "listComposites", "default": null,
+            "desc": "For error feed in use, the feeds being used are listed here.",
+            "feedname": {
+                "type": "str",
+                "desc": "feed name"
+            }
         }
     }, "_sheetReq_": {
         "type": "composite",
@@ -502,25 +511,25 @@
         "name": {
             "type": "str",
             "desc": "New name for sheet"
+        },
+        "routing": {
+            "type": "routing.macro"
         }
     }, "_sheetCfm_": {
         "type": "composite",
         "desc": "Response to _sheetReq_",
+        "routing": {
+            "type": "routing.macro"
+        },
         "Congregation": {
             "type": "address.macro", "default": null,
-            "desc": "Address of the Congregation to re-send this request"
+            "desc": "Address of the Congregation where to resend the sheetReq towards the summit. Or, towards the congregation that will house this sheet."
         },
         "status": {
             "type": "str",
             "choice": ["redirect", "deleted", "created", "updated", "wrong version", "no change", "timeout"],
             "desc": "Update status."
         }
-    }, "_HalleluReq_": {
-        "type": "_cmdReq_",
-        "desc": "Request to Congregation, from Hallelujah, to create a Hallelu process"
-    }, "_HalleluCfm_": {
-        "type": "_cmdCfm_",
-        "desc": "Confirmation from congregation of creation of a Hallelu"
     }, "_JahReq_": {
         "type": "_cmdReq_",
         "desc": "Request to Congregation, from Hallelu, to create a Jah process"
@@ -581,14 +590,14 @@
         }
     }, "_streamCanReq_": {
         "type": "composite",
-        "desc": "_streamCan_ is streamReq_ is sent to Hallelu, from other Hallelu or User, to stop a stream of data from the Hallelu's Jah. Same Message is forwarded to each Jah.",
+        "desc": "_streamCan_ is sent to Hallelu, from other Hallelu or User, to stop a stream of data from the Hallelu's Jah. Same Message is forwarded to each Jah.",
         "streamUuid": {
             "type": "str",
             "desc": "stream UUID"
         }
     }, "_streamCanCfm_": {
         "type": "composite",
-        "desc": "_streamAck_ stops retransmit of _streamCan_",
+        "desc": "_streamCanCfm_ stops retransmit of _streamCan_",
         "streamUuid": {
             "type": "str",
             "desc": "stream UUID"

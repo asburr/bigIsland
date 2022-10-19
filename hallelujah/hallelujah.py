@@ -11,197 +11,254 @@
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
 # 
 from magpie.src.mworksheets import MWorksheets
-from root import RootHJC
+from hallelujah.root import RootH
 import os
-import json
-from magpie.src.mlogger import MLogger
+from magpie.src.mlogger import MLogger, mlogger
 from magpie.src.mTimer import mTimer
+# from magpie.src.mzdatetime import MZdatetime
+import argparse
+import shutil
+import threading
+import time
 
 
-class Hallelujah(RootHJC):
+class Hallelujah(RootH,threading.Thread):
     """
- Hallelujah is started by Congregation, there is one Hallelujah. It
- handles user interations with the database and manages the worksheets.
+ Hallelujah is a thread that manages user interactions with the database.
+ A local copy of the worksheet is maintained. The user can pull
+ the latest changes from the database, or push the local changes into the
+ database.
+ This class is not used directly, see instead HJ_API.
     """
-    @staticmethod
-    def args(congregationPort: int, halleludir: str, worksheetdir: str):
-        return [congregationPort, halleludir, worksheetdir]
+    def __init__(self, congregationPort: int, worksheetdir: str):
+        try:
+            threading.Thread.__init__(self)
+            RootH.__init__(self,title="hj", congregationPort=congregationPort)
+            if MLogger.isDebug():
+               mlogger.debug(
+                   f"{self.title} worksheetdir={worksheetdir}"
+               )
+            self.worksheets = MWorksheets(worksheetdir)
+            self.processCmd.update({
+                "": self.pull,
+                "_cmdRsp_": self.__cmdRsp,
+                "_cmdCfm_": self.__cmdCfm
+            })
+            self.cmdindTimer = mTimer(3)
+            self.cmdreqTimer = mTimer(3)
+            self.filters={}
+            p=os.path.join(worksheetdir,".dbversion")
+            shutil.rmtree(p,ignore_errors=True)
+            os.mkdir(p)
+            self.worksheets.copySchema(p)
+            self.dbworksheets = MWorksheets(p)
+            self.dbworksheets_state = None
+            self.start()  # Start the thread, see self.run()
+            self.pull()
+            self.error = None
+        except:
+            self.stop = True
+            raise
 
-    def __init__(self, congregationPort: int, halleludir: str, worksheetdir: str):
-        super().__init__(cwd=os.getcwd(), uuid="", halleludir=halleludir, title="hj_", congregationPort=congregationPort)
-        if MLogger.isDebug():
-           self.log.debug(self.title+" halleludir="+halleludir+" worksheetdir="+worksheetdir)
-        self.ws = MWorksheets(worksheetdir)
-        self.ws.expandcmds()
-        self.processCmd.update({
-            "": self.playworksheets,
-            "_sheetsReq_": self.sheetsreq,
-            "_sheetReq_": self.sheetreq,
-            "_cmdReq_": self.cmdreq,
-            "_ParentCongregationCfm_": self._ParentCongregationCfm_,
-            "_ChildCongregationCfm_": self._ChildCongregationCfm_,
-            "_HalleluCfm_": self._HalleluCfm_,
-            "_streamReq_": self.streamreq
-        })
-        self.halleluAddr_cmdUUID = {}
-        with open(self.halleluAddr_cmdUUID_fn,"r") as f:
-            line = next(f)
-            while len(line):
-                l = json.loads(line)
-                if l[0] == "add":
-                    self.halleluAddr_cmdUUID[l[1]] = l[2]
-                else:
-                    del self.halleluAddr_cmdUUID[l[1]]
-                line = next(f)
-        self.halleluAddr_feed = {}
-        with open(self.halleluAddr_feed_fn,"r") as f:
-            line = next(f)
-            while len(line):
-                l = json.loads(line)
-                if l[0] == "add":
-                    self.halleluAddr_feed[l[1]] = l[2]
-                else:
-                    try:
-                        del self.halleluAddr_feed[l[1]]
-                    except:
-                        pass
-                line = next(f)
-        # Timers to manage CMD changes, keyed by cmdUuid.
-        self.cmdreqTimers = mTimer(10)
-        self.ParentCongregationReqTimers = mTimer(10)
-        self.ChildCongregationReqTimers = mTimer(10)
-        self.HalleluReqTimers = mTimer(10)
+    def pull(self, __cmd: dict = None) -> str:
+        """
+        Queries the database for the commands which are pulled into the local
+        worksheet.
+        """
+        if self.dbworksheets_state:
+            return self.dbworksheets_state
+        self.dbworksheets_state = "pulling"
+        v={
+            "params": {
+                "filters": self.filters,
+                "routing": True
+            },
+            "addr":self.congregation_addr
+        }
+        self.cmdindTimer.start(k=1,v=v)
+        self.sendReq(
+            title="_cmdInd_",
+            params=v["params"],
+            remoteAddr=v["addr"]
+        )
+        while self.dbworksheets_state == "pulling":
+            time.sleep(1)
+        # Case when DB is older than local's root.
+        error = self.local.pull(self.dbworksheets.dir)
+        self.dbworksheets_state = None
+        return error
 
-    def playworksheets(self, cmd: dict) -> None:
-        for wsn in self.ws.titles():
-            for cmd in self.ws.sheet(wsn)["cmds"]:
-                self.cmdreq(cmd)
-
-    def sheetsreq(self, cmd: dict) -> None:
-        self.sendCfm(req=cmd,title="_sheetsCfm_", params=[{"uuid": w["uuid"], "name": w["name"], "filename": w["filename"]} for w in self.ws])
-
-    def sheetreq(self, cmd: dict) -> None:
-        self.sendCfm(req=cmd,title="_sheetCfm_", params=[{"cmd": sheetcmd, "hallelu": self.halleluAddr.get(sheetcmd["uuid"],("",0))} for sheetcmd in self.ws.getWorkSheetCmds(cmd["uuid"])])
-
-    def cmdreq(self, cmd: dict) -> None:
-        """ Forward cmdreq to hallelu, or search for Congregation to create a new Hallelu. """
-        cmdUuid = cmd["cmdUuid"]
-        halleluAddr = self.halleluAddr_cmdUUID.get(cmdUuid,None)
-        if halleluAddr:
-            self.sendReq(title="_cmdReq_", params=cmd, remoteAddr=halleluAddr)
-            self.cmdreqTimers.start(cmdUuid,cmd)
-        else:
-            self.sendReq(title="_ParentCongregationReq_", params={"cmdUuid": cmdUuid}, remoteAddr=self.congregation_addr)
-            self.ParentCongregationReqTimers.start(cmdUuid,(self.congregation_addr,cmd))
-
-    def _ParentCongregationCfm_(self, cmd: dict) -> None:
-        """ Search for summit Congregation. """
-        cmdUuid = cmd["cmdUuid"]
-        addr = cmd["__remote_address__"]
-        timer = self.ParentCongregationReqTimers.getStop(cmdUuid)
-        if timer == None:
+    def __cmdRsp(self, cmd: dict) -> None:
+        """ Build worksheet from cmds in cmdRsp. Resend the first cmdind
+            towards the summit congregation. Or, resend to the next congregation.
+            Otherwise, no more cmds and then the worksheet is complete.
+        """
+        if "cmd" in cmd:
+            (params, selected, description) = self.dbworksheets.paramsCmd(cmd=cmd,at=None)
+            self.dbworksheets.updateCmd(cmd["cmd"]["uuid"], None, selected, changelog=False)
+        # Get params from timer before stopping it.
+        v = self.cmdreqTimer.get(1)
+        self.cmdindTimer.stop(1)
+        # No more redirections means this is the last response.
+        if "Congregation" not in cmd:
+            self.dbworksheets.save(self.dbworksheets.dir)
+            self.dbworksheets_state = "built"
             return
-        (priorParentAddr, cmdreq) = timer
-        if priorParentAddr == addr:
-            self.sendReq(title="_ChildCongregationReq_", params={"cmdUuid": cmdUuid}, remoteAddr=addr)
-            self.ChildCongregationReqTimers.start(cmdUuid,(addr,cmdreq))
+        # More redirections, copy the routing indicator and address from the response.
+        v["params"]["routing"] = cmd["routing"]
+        v["addr"] = cmd["Congregation"]
+        self.cmdindTimer.start(k=1,v=v)
+        self.sendReq(
+            title="_cmdInd_",
+            params=v["params"],
+            remoteAddr=v["addr"]
+        )
+
+    def push(self) -> str:
+        """
+        Push each local change into the database, upto and including the
+        current change. Or, stops before the change that failed.
+        After each a successfull push, the change is accepted and cannot
+        be undone.
+        """
+        if self.dbworksheets_state:
+            return self.dbworksheets_state
+        while True:
+            change = self.worksheets.getCurrentChange()
+            if not change:
+                break
+            (wsuuid, cmd) = change
+            v = {
+                "params": {
+                    "cmdUuid": cmd["uuid"],
+                    "version": cmd["version"],
+                    "newVersion": str(int(cmd["version"])+1),
+                    "sheetUuid": wsuuid,
+                    "cmd": {cmd["name"]: cmd[cmd["name"]]},
+                    "routing": True
+                },
+                "addr":cmd["Congregation"]
+            }
+            self.dbworksheets_state = "pushing"
+            self.cmdreqTimer.start(k=1,v=v)
+            self.sendReq(
+                title="_cmdReq_",
+                params=v["params"],
+                remoteAddr=v["addr"]
+            )
+            while self.dbworksheets_state == "pushing":
+                time.sleep(1)
+            if self.dbworksheets_state == "failed":
+                self.dbworksheets_state == None
+                return self.error
+            self.worksheets.push()
+        return None
+
+    def __cmdCfm(self, cmd: dict) -> None:
+        """
+        Redirect cmdreq when cmdreq was successfull, or get the failure code.
+        """
+        v = self.cmdreqTimer.get(1)
+        self.cmdreqTimer.stop(1)
+        if "Congregation" in cmd: # Redirect request.
+            v["addr"] = cmd["Congregation"]
+        elif cmd["first"] == True: # Resend toward summit.
+            pass
         else:
-            self.sendReq(title="_ParentCongregationReq_", params={"cmdUuid": cmdUuid}, remoteAddr=addr)
-            self.ParentCongregationReqTimers.start(cmdUuid,(addr,cmdreq))
-
-    def _ChildCongregationCfm_(self, cmd: dict) -> None:
-        """ Search for child Congregation where a new Hallelu will be created. """
-        cmdUuid = cmd["cmdUuid"]
-        addr = cmd["__remote_address__"]
-        timer = self.ChildCongregationReqTimers.getStop(cmd["cmdUuid"])
-        if timer == None:
+            if cmd["status"] == "updated":
+                self.dbworksheets_state = "pushed"
+            else:
+                self.dbworksheets_state = "failed"
+                self.error = cmd["status"]
             return
-        (priorChildAddr, cmdreq) = timer
-        if priorChildAddr == addr:
-            self.sendReq(title="_HalleluReq_", params=cmdreq, remoteAddr=addr)
-            self.HalleluReqTimers.start(cmdUuid,cmdreq)
-        else:
-            self.sendReq(title="_ChildCongregationReq_", params={"cmdUuid": cmdUuid}, remoteAddr=addr)
-            self.ChildCongregationReqTimers.start(cmdUuid,(addr,cmdreq))
-
-    def _HalleluCfm_(self, cmd: dict) -> None:
-        """ Congregation has created a Hallelu, send cmdCfm to the originator of the cmdreq. """
-        cmdUuid = cmd["cmdUuid"]
-        cmdreq = self.HalleluReqTimers.getStop(cmdUuid)
-        if cmdreq == None:
-            return
-        addr = cmd["__remote_address__"]
-        # Remove any uuid and feeds associated with this cmd.
-        if cmdUuid in self.halleluAddr_cmdUUID:
-            addr = self.halleluAddr_cmdUUID[cmdUuid]
-            toDelete = []
-            for feed in self.halleluAddr_feed:
-                if self.halleluAddr_feed[feed] == addr:
-                    toDelete.append(feed)
-            for feed in toDelete:
-                del self.halleluAddr_feed[feed]
-            del self.halleluAddr_cmdUUID[cmdUuid]
-        # Add uuid and feeds associated with this cmd.
-        if cmd["status"] in ["created", "updated"]:
-            self.halleluAddr_cmdUUID[cmdUuid] = addr
-            with open(self.halleluAddr_cmdUUID_fn,"a+") as f:
-                line = json.dumps(["add",cmdUuid,addr])+"\n"
-                f.write(line)
-            for feed in cmd["feeds"]:
-                self.halleluAddr_feed[feed] = addr
-                with open(self.halleluAddr_feed_fn,"a+") as f:
-                    line = json.dumps(["add",feed,addr])+"\n"
-                    f.write(line)
-        elif cmd["status"] == "delete":
-            del self.halleluAddr_cmdUUID[cmdUuid]
-            with open(self.halleluAddr_cmdUUID_fn,"a+") as f:
-                line = json.dumps(["del",cmdUuid,addr])+"\n"
-                f.write(line)
-            for feed in cmd["feeds"]:
-                self.halleluAddr_feed[feed] = addr
-                with open(self.halleluAddr_feed_fn,"a+") as f:
-                    line = json.dumps(["del",feed,addr])+"\n"
-                    f.write(line)
-        # Let user know the request is complete.
-        self.sendCfm(req=cmdreq,title="_cmdCfm_", params=cmd)
-
-    def streamreq(self, cmd: dict) -> None:
-        """ forward req to Hallelu. """
-        if cmd["feed"] not in self.halleluAddr_feed:
-            self.sendCfm(req=cmd,title="_streamCfm_", params={"state": "fail"})
-        self.sendReq(title="_streamReq_", params=cmd, remoteAddr=self.halleluAddr_feed[cmd["feed"]])
-
+        self.cmdreqTimer.start(k=1,v=v)
+        self.sendReq(
+            title="_cmdReq_",
+            params=v["params"],
+            remoteAddr=v["addr"]
+        )
+                
     def tick(self) -> bool:
-        """ Timeout during cmdreq terminates any further processing associated with the cmdreq. """
+        """ Handle timeout with retransmit to the local congregation. """
         didSomething = super().tick()
-        for cmdUuid, cmdreq in self.cmdreqTimers.expired():
+        for k, v in self.cmdindTimer.expired():
             didSomething = True
-            self.sendCfm(req=cmdreq,title="_cmdCfm_", params={"status": "timeout"})
-            self.ParentCongregationReqTimers.stop(cmdUuid)
-            self.ChildCongregationReqTimers.stop(cmdUuid)
-            self.HalleluReqTimers.stop(cmdUuid)
-        for cmdUuid, priorParentAddr, cmdreq in self.ParentCongregationReqTimers.expired():
+            v["first"] = True
+            v["addr"] = self.congregation_addr
+            self.cmdindTimer.start(k=k,v=v)
+            self.sendReq(
+                title="_cmdInd_",
+                params=v["params"],
+                remoteAddr=v["addr"]
+            )
+        for k, v in self.cmdreqTimer.expired():
             didSomething = True
-            self.sendCfm(req=cmdreq,title="_cmdCfm_", params={"status": "timeout"})
-            self.ChildCongregationReqTimers.stop(cmdUuid)
-            self.HalleluReqTimers.stop(cmdUuid)
-        for cmdUuid, priorChildAddr, cmdreq in self.ChildCongregationReqTimers.expired():
-            didSomething = True
-            self.sendCfm(req=cmdreq,title="_cmdCfm_", params={"status": "timeout"})
-            self.HalleluReqTimers.stop(cmdUuid)
-        for cmdUuid, cmdreq in self.HalleluReqTimers.expired():
-            didSomething = True
-            self.sendCfm(req=cmdreq,title="_cmdCfm_", params={"status": "timeout"})
-            self.HalleluReqTimers.stop(cmdUuid)
+            v["first"] = True
+            v["addr"] = self.congregation_addr
+            self.cmdindTimer.start(k=k,v=v)
+            self.sendReq(
+                title="_cmdReq_",
+                params=v["params"],
+                remoteAddr=v["addr"]
+            )
         return didSomething
 
+    def run(self) -> None:
+        self.poll()
+
+    def stop(self) -> None:
+        print("STOPP")
+
+class HJ_API:
+    """
+    The API for Hallelujah. Creates the Hallelujah process, manages the interactions
+    between synchronized user requests and asynchronous database messaging.
+    """
+    def __init__(self, congregationPort: int, worksheetdir: str):
+        self.hj = Hallelujah(
+            congregationPort=congregationPort,
+            worksheetdir=worksheetdir
+        )
+
+    def stop(self) -> None:
+        """ Stop the API thread """
+        if self.hj:
+            self.hj.stop()
+
+    def local(self) -> MWorksheets:
+        """ Get the local worksheets. """
+        return self.hj.worksheets
+
+    def pull(self) -> str:
+        """ Rebase local worksheets with what is in the database. """
+        self.hj.pull()
+
+    def push(self, description: str) -> list:
+        """ Release local worksheets to the database.
+        1. Push worksheet into database.
+        2. Return failure for each cmd and sheet with an older version.
+        3. Get worksheet from database.
+        4. local.changeRoot(worksheet).
+        5. Not failures to report, there's no changes to apply.
+        6. local.newRoot() - this purges the old change log, so the worksheets
+           cannot be undone beyond the recent pushed version.
+        """
+
     @staticmethod
-    def child_main(congregationPort: int, halleludir: str, worksheetdir: str, debug : bool=False):
-        if debug:
+    def main():
+        parser = argparse.ArgumentParser(description="Hallelujah tester")
+        parser.add_argument('port', help="Congregation port")
+        parser.add_argument('dir', help="worksheet dir")
+        parser.add_argument("-d",'--debug', help="Debug logging")
+        args = parser.parse_args()
+        if args.debug:
             MLogger.init("DEBUG")
-        h = Hallelujah(congregationPort, halleludir, worksheetdir)
-        h.poll()
+        h = HJ_API(
+                congregationPort=int(args.port),
+                worksheetdir=args.dir
+            )
+        h.stop()
 
 
 if __name__ == "__main__":
-    raise Exception("Hallelujah is started by congregation, using -m for master node where Hallelujah runs")
+    HJ_API.main()

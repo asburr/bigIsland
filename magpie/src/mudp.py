@@ -10,44 +10,6 @@
 # 
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
 #
-# A UDP wrapper
-# =============
-# Designed for database request and response.
-# Using Python multi-threads, there is a reader thread that ensures the
-# socket recv buffer does not overflow. It queues content in memory.
-# A MUDP object is created for each socket, all threads send and receive on
-# this socket using the same MUDP instance.
-# UDP loss is detected.
-# =====================
-# MUDP can be configured (skipBad=True) to recovered from
-# loss by skipping the content that was lost, and reporting the content that
-# can be salvaged from the lossy communication. Alternatively, MUDP is
-# configured (skipBad=False) which drops the request when lossy communication
-# is detected, in this case, the application is expected to detect the loss
-# by checking what recv() yields, loss is reported as a None content with the
-# EOM of True.
-# UDP loss is detect by gaps in sequence ids:
-# 1. Request id is four hex digits, initial value is random then one up.
-# 2. Content id is two hex digits, initial value is zero then one up.
-# 3. Chunk id is a two hex digit, initial value is zero then one up.
-# The messages formats:
-#  <request id>O<content id>o<chunk id><only content>
-#  <request id>B<content id>o<chunk id><first content>
-#  <request id>C<content id>o<chunk id><next content>
-#  <request id>F<content id>o<chunk id><last content>
-# Check formats:
-#  <request id>O<content id>o<chunkid><only chunk>
-#  <request id>O<content id>b<chunkid><first chunk>
-#  <request id>O<content id>c<chunkid><next chunk>
-#  <request id>O<content id>f<chunkid><last chunk>
-# The Client API
-# ==============
-# see examples in main()
-#
-# Notes about binding addresses in particular IPv6:
-# '' is ENYADDR, 0 causes bind to select a random port.
-# IPv6 requires socket.bind((host, port, flowinfo, scope_id))
-#
 import socket
 import select
 import traceback
@@ -59,7 +21,39 @@ import time
 
 # MUDPKey : Msgs are keyed by ip, port, and rid.
 class MUDPKey():
-
+    """
+    A UDP wrapper designed for database request and response.
+    Using Python multi-threads, there is a reader thread that ensures the
+    socket recv buffer does not overflow. It queues content in memory.
+    A MUDP object is created for each socket, all threads send and receive on
+    this socket using the same MUDP instance.
+    UDP loss is detected. MUDP can be configured (skipBad=True) to recovered from
+    loss by skipping the content that was lost, and reporting the content that
+    can be salvaged from the lossy communication. Alternatively, MUDP is
+    configured (skipBad=False) which drops the request when lossy communication
+    is detected, in this case, the application is expected to detect the loss
+    by checking what recv() yields, loss is reported as a None content with the
+    EOM of True.
+    UDP loss is detect by gaps in sequence ids:
+    1. Request id is four hex digits, initial value is random then one up.
+    2. Content id is two hex digits, initial value is zero then one up.
+    3. Chunk id is a two hex digit, initial value is zero then one up.
+    The messages formats:
+     <request id>O<content id>o<chunk id><only content>
+     <request id>B<content id>o<chunk id><first content>
+     <request id>C<content id>o<chunk id><next content>
+     <request id>F<content id>o<chunk id><last content>
+    Check formats:
+     <request id>O<content id>o<chunkid><only chunk>
+     <request id>O<content id>b<chunkid><first chunk>
+     <request id>O<content id>c<chunkid><next chunk>
+     <request id>O<content id>f<chunkid><last chunk>
+    
+    The Client API - see examples in main()
+    Notes about binding addresses in particular IPv6:
+    '' is ENYADDR, 0 causes bind to select a random port.
+    IPv6 requires socket.bind((host, port, flowinfo, scope_id))
+    """
     requestId: int = int(random.random()*0xffff)
     def __init__(self, addr: (str, int), requestId: int=-1):
         self.requesting = (requestId == -1)

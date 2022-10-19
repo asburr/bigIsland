@@ -15,6 +15,7 @@
 # export PYTHONPATH=.
 # python3 sheet/wi.py
 import socket
+import os
 import argparse
 import traceback
 import json
@@ -32,6 +33,7 @@ from magpie.src.mudp import MUDP, MUDPBuildMsg
 from magpie.src.mworksheets import MWorksheets, MCmd
 from sheet.QueryParams import QueryParams
 from sheet.Grid import WiGrid
+from hallelujah.allelujah import Hallelujah
 
 
 class WiSampleGrid(wx.Frame):
@@ -97,26 +99,30 @@ class WiSampleGrid(wx.Frame):
                 self.label.SetValue("%d rows (partial response that timed out; is database overloaded?)"%len(self.rows))
             else:
                 self.label.SetValue("%d rows (complete response)"%len(self.rows))
-
-
+    
 class WiWS(wx.Frame):
-    def __init__(self, cfg):
+    def __init__(self, debug: bool, wsdir: str, congregation: (str,int)):
+        self.hj = 
         wx.Frame.__init__(self, parent=None, title="Worksheet")
+        self.rootHJ.sendReq(title="_conReq_", params={}, remoteAddr=congregation)
         try:
-            self.ws = MWorksheets(cfg["wsdir"])
+            self.ws = MWorksheets(wsdir)
         except Exception as e:
             traceback.print_exc()
             wx.MessageBox(e.__class__.__name__+":"+str(e), "Error in worksheet", wx.OK, self)
             self.Layout()
             self.Show()
             raise e
-        self.congregation = cfg["congregation"]
+        self.congregation = congregation
         boxSizer = wx.BoxSizer(wx.VERTICAL)
         self.panel = wx.Panel(self)
         self.cmd = None
         wsns = self.ws.titles()
         wsns.append("new worksheet")
         self.ws_selection = wx.ComboBox(self.panel, choices=wsns)
+        # Changing choices:
+        #   self.ws_selection.SetItems(wsns)
+        #   self.ws_selection.SetValue(current_value)
         self.ws_selection.SetValue("Please select worksheet")
         self.ws_selection.Bind(wx.EVT_COMBOBOX, self.ws_selected)
         boxSizer.Add(self.ws_selection, proportion=0, flag=wx.EXPAND)
@@ -161,7 +167,7 @@ class WiWS(wx.Frame):
     def wsaddedcmd_verify(self, qp: QueryParams) -> str:
         wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
         selected = qp.getSelected()
-        return self.ws.updateCmd(wsn=wsn, cmd=None, selected=selected)
+        return self.ws.updateCmd(wsn=wsn, selected=selected)
 
     def wsaddedcmd_close(self, event):
         wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
@@ -171,7 +177,7 @@ class WiWS(wx.Frame):
             return
         # cmdname = qp.data
         selected = qp.getSelected()
-        error = self.ws.updateCmd(wsn=wsn, cmd=None, selected=selected)
+        error = self.ws.updateCmd(wsn=wsn, selected=selected)
         if len(error) > 0:
             wx.MessageBox(
                 error,
@@ -224,8 +230,7 @@ class WiWS(wx.Frame):
 
     def ws_verify(self, qp: QueryParams) -> str:
         wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
-        cmd = self.ws.getCmdUuid(uuid=qp.data)
-        return self.ws.updateCmd(wsn=wsn, cmd=cmd, selected=qp.getSelected())
+        return self.ws.updateCmd(wsn=wsn, cmdUuid=qp.data, selected=qp.getSelected())
 
     def ws_sample(self, title:str) -> None:
         WiSampleGrid(title=title, remoteAddr=self.congregation, mudp=self.mudp)
@@ -264,7 +269,7 @@ class WiWS(wx.Frame):
             self.ws.purgeCmd(cmd)
             self.grid.update(self.titles, self.ws.inputCmdOutput(wsn))
         elif qp.res == wx.CANCEL:
-            self.ws.deleteCmd(wsn=wsn,outputs=qp.data)
+            self.ws.deleteCmdByOutputs(wsn=wsn,outputs=qp.data)
             self.grid.update(self.titles, self.ws.inputCmdOutput(wsn))
         event.Skip()
 
@@ -289,9 +294,8 @@ class WiWS(wx.Frame):
         # root = Tk()
         # img = Tkinter.Image("photo", file="appicon.gif")
         # root.tk.call('wm','iconphoto',root._w,img)
-        cfg = {"debug": args.debug, "wsdir": args.dir, "congregation": (args.ip, args.port)}
         try:
-            WiWS(cfg)
+            WiWS(debug=args.debug, wsdir=args.dir, congregation=(args.ip, args.port))
         except Exception:
             traceback.print_exc()
             return

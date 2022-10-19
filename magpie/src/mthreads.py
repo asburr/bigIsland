@@ -23,12 +23,12 @@
 # Why MThreads?
 # MThreads determines the number of threads that is needed to keep the CPU
 # busy while not overloading the CPU. Too much CPU usage and the threads run
-# inefficently as they compete for the same CPU. Too less threads and the CPU
+# inefficently as they compete for the same CPU. Too few threads and the CPU
 # is underutilized. CPU utilization is critical on platforms with horizontal
 # pod autoscalers, like Kubernetes. Too little CPU usage and the scalers
-# wont ever be triggered, too much cpu usage overload the pods.
+# wont ever be triggered, too much cpu usage overloads the pod.
 #
-# Okay, what does MThreads do?
+# Okay, so what does MThreads do?
 # MThreads creates an additional thread that measures idleness. MThreads
 # creates threads up until the idle threashold is reached. MThreads deletes
 # threads when the CPU is too busy. 

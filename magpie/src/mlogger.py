@@ -76,8 +76,5 @@ class MLogger:
   def isCritical() -> bool:
     return MLogger.level >= logging.CRITICAL
 
-  @staticmethod
-  def getLogger() -> logging.Logger:
-    return logging.getLogger()
-
 MLogger.setLevel()
+mlogger = logging.getLogger()

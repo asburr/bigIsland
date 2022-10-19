@@ -20,6 +20,7 @@ if platform.python_version_tuple() < ('3', '6', '9'):
 
 class mTimer():
     def __init__(self, duration: int):
+        """ duration is seconds. """
         self.timers={}
         self.dur = duration
 
@@ -50,6 +51,7 @@ class mTimer():
         return [(k, (t > v[0]), v[1]) for k, v in self.timers.items()]
 
     def expired(self) -> (str, any):
+        """ Expired timers are stopped and k,v pair is returned. """
         t = time()
         expired = []
         for k, v in self.timers.items():
@@ -57,8 +59,8 @@ class mTimer():
                 break
             expired.append((k,v[1]))
         for k, v in expired:
-            yield (k,v)
             del self.timers[k]
+            yield (k,v)
 
     @staticmethod
     def main():

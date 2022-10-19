@@ -10,9 +10,9 @@
 # 
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
 #
-from root import RootHJC
-from cmds.files import Files
-from cmds.test import Test
+from hallelujah.root import RootHJC
+from hallelujah.cmds.files import Files
+from hallelujah.cmds.test import Test
 from magpie.src.mlogger import MLogger
 
 class Jah(RootHJC):
