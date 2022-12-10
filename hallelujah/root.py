@@ -41,14 +41,14 @@ class RootH():
         self.port = self.s.getsockname()[1]
         self.localAddress = (self.host, self.port)
         self.title = title
-        self.stop = False
+        self._stop = False
         self.mudp = MUDP(socket=self.s, skipBad=False)
         self.processCmd = {}
         self.processCmd[""] = self.commandDoNothing
 
     def stop(self) -> None:
         print("stop")
-        self.stop = True
+        self._stop = True
 
     def commandDoNothing(self, cmd: dict) -> None:
         pass
@@ -58,7 +58,7 @@ class RootH():
             mlogger.debug(self.title+" start " + str(self.host)+":"+str(self.port))
         self.processCmd[""]({})  # Run the start cmd.
         didSomething = False
-        while not self.stop:
+        while not self._stop:
             if didSomething:
                 didSomething = False
                 if MLogger.isDebug():
@@ -86,7 +86,7 @@ class RootH():
                 sleep(0.1)
         if MLogger.isDebug():
             mlogger.debug(self.title+" stopped")
-        self.stop = False
+        self._stop = False
 
     def tick(self) -> bool:
         """Placeholder for any periodic work. Return True when work was done. """
@@ -105,7 +105,7 @@ class RootH():
         remoteAddr = req["__remote_address__"]
         requestId = req["__request_id__"]
         if MLogger.isDebug():
-            mlogger.debug(self.title+" sendCfm "+title+" to "+str(remoteAddr)+":"+str(requestId))
+            mlogger.debug(f"{self.title} sendCfm {title} to {remoteAddr}:{requestId} params {params}")
         self.mudp.send(
             content=json.dumps({"cmd": title, "params": params}),
             eom=True,
@@ -141,9 +141,9 @@ class RootHJ(RootH):
                 port = 0
             return (cmd, port)
 
-    def rmProcessFile(self, fn: str) -> None:
+    def rmProcessFile(self, fn: str) -> bool:
         if not os.path.exists(fn):
-            return
+            return False
         with open(fn, "r") as f:
             line = f.readline()
             line = f.readline()
@@ -159,6 +159,7 @@ class RootHJ(RootH):
             if MLogger.isDebug():
                 mlogger.debug(self.title+" Remove "+fn)
             os.remove(fn)
+            return True
 
     def createProcessfile(self, fn: str, cmd: dict) -> bool:
         if os.path.exists(fn):

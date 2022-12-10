@@ -17,17 +17,35 @@ import uuid
 import argparse
 import shutil
 from magpie.src.mlogger import MLogger, mlogger
+from magpie.src.mzdatetime import MZdatetime
+
+
+class MJournalChange:
+    """
+    A change.
+    """
+    def __init__(self):
+        self.when = MZdatetime().strftime()
+        pass
+
+    def json(self):
+        d={"type": self.__class__.__name__}
+        for k, v in self.__dict__.items():
+            d[k] = v
+        return d
 
 
 class MJournal:
     """ Journal is chain of changes, stored in a directory with each file
-        documenting the change,
+        documenting a change,
           {
             __previous__: None,
             __this__: None,
             __next__: None,
             __change__: None
           }
+        Head is the oldest, previous gets the older change, next gets the
+        newer change.
         A UUID uniquely identifies the change, and the change file is named
         after the uuid, uuid.log. There is a subdir that is also named after
         the UUID. The subdir is not used by MJournal but is reserved for
@@ -48,10 +66,9 @@ class MJournal:
             Head links to the first change.
         """
         self.dir = dir
-        if not os.path.isdir(dir):
-            os.mkdir(self.dir)
         if purge:
             shutil.rmtree(dir)
+        if not os.path.isdir(dir):
             os.mkdir(self.dir)
         self.__headPath = os.path.join(self.dir,self.__head__)
         self.__currentPath = os.path.join(self.dir,self.__current__)
@@ -60,39 +77,14 @@ class MJournal:
                 self.logfile = os.path.join(self.dir,f"{json.load(f)}.log")
             with open(self.logfile, "r") as f:
                 self.log = json.load(f)
-        else: # No current, create the head.
-            self.__emptyHead()
+        else:
+            self.lofile = None
+            self.log = None
         self.audit()
 
     def empty(self) -> bool:
-        with open(self.__headPath, "r") as f:
-            headUuid = json.load(f)
-        if self.current() != headUuid: # More than one change.
-            return False
-        with open(os.path.join(self.dir,f"{headUuid}.log"), "r") as f:
-            head = json.load(f)
-        if head[self.__next__]: # More than one change.
-            return False
-        return True # No changes, only head.
+        return not os.path.isfile(self.__headPath)
 
-    def __emptyHead(self):
-        """ Create a new chain, an empty chain, with current pointing to head """
-        loguuid = str(uuid.uuid4())
-        self.logfile = os.path.join(self.dir,f"{loguuid}.log")
-        with open(self.logfile, "w") as f:
-            self.log = {
-                self.__previous__: "",
-                self.__this__: loguuid,
-                self.__next__: "",
-                self.__change__: {}
-            }
-            json.dump(self.log,f)
-        os.mkdir(os.path.join(self.dir,loguuid))
-        with open(self.__currentPath, "w") as f:
-            json.dump(loguuid,f)
-        with open(self.__headPath, "w") as f:
-            json.dump(loguuid,f)
-        
     def audit(self):
         """ Audit change directory. """
         change = True
@@ -151,44 +143,49 @@ class MJournal:
                         continue
 
     def __str__(self) -> str:
+        """ End of the list to head. """
+        if not os.path.isfile(self.__headPath):
+            return "No changes"
         with open(self.__currentPath, "r") as f:
             current = json.load(f)
         with open(self.__headPath, "r") as f:
             uuid = json.load(f)
         __headPath = os.path.join(self.dir,f"{uuid}.log")
         with open(__headPath, "r") as f:
-            head = json.load(f)     
-        if not head[self.__next__]:
-            return "No changes"
-        nextp = os.path.join(self.dir,f"{head[self.__next__]}.log")
-        with open(nextp, "r") as f:
-            log = json.load(f)
+            log = json.load(f)     
+        while log[self.__next__]:
+            with open(os.path.join(self.dir,f"{log[self.__next__]}.log"), "r") as f:
+                log = json.load(f)
         s=""
         while log:
+            s+=f"{log[self.__previous__]} < {log[self.__this__]}:{log[self.__change__]} > {log[self.__next__]}"
             if log[self.__this__] == current:
-                s+=f"{log[self.__this__]} current"
+                s+=" current\n"
             else:
-                s+=f"{log[self.__this__]}"
-            if log[self.__next__]:
-                with open(os.path.join(self.dir,f"{log[self.__next__]}.log"), "r") as f:
+                s+="\n"
+            if log[self.__previous__]:
+                with open(os.path.join(self.dir,f"{log[self.__previous__]}.log"), "r") as f:
                     log = json.load(f)
             else:
                 log = None
         return s
 
     def head(self) -> str:
-        with open(self.__headPath, "r") as f:
-            return json.load(f)
+        """ UUID for the first change. """
+        if not os.path.isfile(self.__headPath):
+            with open(self.__headPath, "r") as f:
+                return json.load(f)
+        return None
 
     def current(self) -> str:
         """ UUID for the current change. """
-        if self.log[self.__this__] != self.__head__:
+        if self.log:
             return self.log[self.__this__]
         return None
 
     def currentPath(self) -> str:
         """ Path for the current change. """
-        if self.log[self.__this__] != self.__head__:
+        if self.log:
             return os.path.join(self.dir,self.log[self.__this__])
         return None
 
@@ -228,33 +225,48 @@ class MJournal:
         return None
 
     def add(self, change: any) -> str:
-        """ Path to the change. """
-        # Insert order: (3)ThisLog -> (1)NewLog -> (2)NextLog.
-        nextUuid = self.log[self.__next__]
-        thisUuid = self.log[self.__this__]
-        # 1 Newlog is created first and linked to next and previous.
+        """
+        A new change after the most resent change to become the
+        current change.
+        Insert order: (3)ThisLog -> (1)NewLog -> (2)NextLog.
+        """
         newUuid = str(uuid.uuid4())
-        newlog = {
-            self.__previous__: thisUuid,
-            self.__this__: newUuid,
-            self.__next__: nextUuid,
-            self.__change__: change
-        }
         newlogfile = os.path.join(self.dir,f"{newUuid}.log")
-        with open(newlogfile, "w") as f: # (2)
-            json.dump(newlog,f)
-        # 2 Nextlog is linked back to the newlog.
-        if nextUuid:
-            nextlogfile = os.path.join(self.dir,f"{nextUuid}.log")
-            with open(nextlogfile, "r") as f:
-                nextlog = json.load(f)
-            nextlog[self.__previous__] = newUuid
-            with open(nextlogfile, "w") as f:
-                json.dump(nextlog,f)
-        # 3 thislog is linked forward to newlog.
-        self.log[self.__next__] = newUuid
-        with open(self.logfile, "w") as f:
-            json.dump(self.log,f)
+        if not os.path.isfile(self.__headPath):
+            with open(newlogfile, "w") as f:
+                newlog = {
+                    self.__previous__: "",
+                    self.__this__: newUuid,
+                    self.__next__: "",
+                    self.__change__: change
+                }
+                json.dump(newlog,f)
+            with open(self.__headPath, "w") as f:
+                json.dump(newUuid,f)
+        else:
+            nextUuid = self.log[self.__next__]
+            thisUuid = self.log[self.__this__]
+            # 1 Newlog is created first and linked to next and previous.
+            newlog = {
+                self.__previous__: thisUuid,
+                self.__this__: newUuid,
+                self.__next__: nextUuid,
+                self.__change__: change
+            }
+            with open(newlogfile, "w") as f:
+                json.dump(newlog,f)
+            # 2 Nextlog is linked back to the newlog.
+            if nextUuid:
+                nextlogfile = os.path.join(self.dir,f"{nextUuid}.log")
+                with open(nextlogfile, "r") as f:
+                    nextlog = json.load(f)
+                nextlog[self.__previous__] = newUuid
+                with open(nextlogfile, "w") as f:
+                    json.dump(nextlog,f)
+            # 3 thislog is linked forward to newlog.
+            self.log[self.__next__] = newUuid
+            with open(self.logfile, "w") as f:
+                json.dump(self.log,f)
         # Newlog is current.
         with open(self.__currentPath, "w") as f:
             json.dump(newUuid,f)
@@ -265,37 +277,100 @@ class MJournal:
         os.mkdir(uuidPath)
         return uuidPath
 
+    def insertRoot(self, change: MJournalChange) -> str:
+        """
+        Insert change as the new root, make it the current change too.
+        """
+        newUuid = str(uuid.uuid4())
+        newlogfile = os.path.join(self.dir,f"{newUuid}.log")
+        newlog = {
+            self.__previous__: "",
+            self.__this__: newUuid,
+            self.__next__: "",
+            self.__change__: change.json()
+        }
+        if os.path.isfile(self.__headPath):
+            with open(self.__headPath, "r") as f:
+                headuuid = json.load(f)
+            headlogfile = os.path.join(self.dir,f"{headuuid}.log")
+            with open(headlogfile, "r") as f:
+                headlog = json.load(f)
+            headlog[self.__previous__] = newUuid
+            with open(headlogfile, "w") as f:
+                json.dump(headlog,f)
+            newlog[self.__next__] = headuuid
+        with open(newlogfile, "w") as f:
+            json.dump(newlog,f)
+        with open(self.__headPath, "w") as f:
+            json.dump(newUuid,f)
+        with open(self.__currentPath, "w") as f:
+            json.dump(newUuid,f)
+        uuidPath =  os.path.join(self.dir,newUuid)
+        os.mkdir(uuidPath)
+        self.log  = newlog
+        self.logfile = newlogfile
+        return uuidPath
+
     def delete(self) -> bool:
-        """ Delete the next change """
-        # Delete the log: this->next(delete)->next
-        if not self.log[self.__next__]:
-            # No next to delete.
+        """
+        Delete the current change.
+        1/ Current has a previous change, current is the older change.
+        2/ Or, Current has a next change, current is the newer change.
+        3/ Or, when no other change, chain is empty.
+        """
+        oldlog = self.log
+        if not oldlog:
             return False
-        # 1 nextlog is to be deleted.
-        nextlogfile = os.path.join(self.dir,f"{self.log[self.__next__]}.log")
-        with open(nextlogfile, "r") as f:
-            nextlog = json.load(f)
-        # 1 next is linked backward, over the deleted change.
-        if nextlog[self.__next__]:
-            nextnextlogfile = os.path.join(self.dir,f"{nextlog[self.__next__]}.log")
-            with open(nextnextlogfile, "r") as f:
-                nextnextlog = json.load(f)
-            nextnextlog[self.__previous__] = self.log[self.__this__]
-            with open(nextnextlogfile, "w") as f:
-                json.dump(nextnextlog,f)
-            self.log[self.__next__] = nextnextlog[self.__this__]
+        oldlogfile = self.logfile
+        self.log = None
+        self.logfile = None
+        previousuuid = oldlog[self.__previous__]
+        nextuuid = oldlog[self.__next__]
+        if previousuuid:
+            previousfile = os.path.join(self.dir,f"{previousuuid}.log")
+            with open(previousfile, "r") as f:
+                previouslog = json.load(f)
+            previouslog[self.__next__] = nextuuid
+            with open(previousfile, "w") as f:
+                json.dump(previouslog,f)
+            self.log = previouslog
+            self.logfile = previousfile
+        if nextuuid:
+            nextfile = os.path.join(self.dir,f"{nextuuid}.log")
+            with open(nextfile, "r") as f:
+                nextlog = json.load(f)
+            nextlog[self.__previous__] = previousuuid
+            with open(nextfile, "w") as f:
+                json.dump(nextlog,f)
+            if not self.log:
+                self.log = nextlog
+                self.logfile = nextfile
+        os.unlink(oldlogfile)
+        shutil.rmtree(os.path.join(self.dir,oldlog[self.__this__]))
+        if self.log:
+            with open(self.__currentPath, "w") as f:
+                json.dump(self.log[self.__this__],f)
+            with open(self.__headPath, "r") as f:
+                headuuid = json.load(f)
+            if headuuid == oldlog[self.__this__]:
+                with open(self.__headPath, "w") as f:
+                    json.dump(self.log[self.__this__],f)
         else:
-            self.log[self.__next__] = ""
-        # 2 Update current change to beyond the deleted change.
-        with open(self.logfile, "w") as f:
-            json.dump(self.log,f)
-        # Delete the change.
-        os.unlink(nextlogfile)
-        shutil.rmtree(os.path.join(self.dir,nextlog[self.__this__]))
+            os.unlink(self.__headPath)
+            os.unlink(self.__currentPath)
         return True
 
+    def prune(self):
+        """ Deletes changes prior to Current, making current the new root. """
+        current = self.current()
+        self.rewind()
+        while self.current() != current:
+            self.delete()
+
     def rewind(self):
-        """ Rewinds to the head of the changes. """
+        """ Rewinds to the oldest change. """
+        if not os.path.isfile(self.__headPath):
+            return
         with open(self.__headPath, "r") as f:
             uuid = json.load(f)
         self.logfile = os.path.join(self.dir,f"{uuid}.log")
@@ -305,7 +380,7 @@ class MJournal:
             json.dump(uuid,f)
 
     def up(self) -> bool:
-        """ Moves up to the next change """
+        """ Moves up to the newer change """
         next = self.log[self.__next__]
         if not next:
             return False
@@ -317,9 +392,8 @@ class MJournal:
         return True
 
     def down(self) -> bool:
-        """ Moves down to the previous change """
+        """ Moves down to the older change """
         previous = self.log[self.__previous__]
-        print(self.log)
         if not previous:
             return False
         with open(self.__currentPath, "w") as f:
@@ -337,37 +411,47 @@ class MJournal:
         shutil.rmtree(args.dir)
         journal = MJournal(args.dir)
         for cmd, data in [
-            ("add",{"test": "testing"}),("print",None),
-            ("add",{"test": "testing"}),("print",None),
+            ("add",{"test1": "testing"}),("print",None),
+            ("add",{"test2": "testing"}),("print",None),
+            ("audit", None),
+            ("del",True),
+            ("rewind",None),("print",None),
+            ("up",False),
+            ("down",False),
+            ("rewind",None),
+            ("del",True),("print",None),
+            ("audit", None),
             ("del",False),
             ("rewind",None),("print",None),
-            ("up",True),("print",None),
-            ("up",True),("print",None),
-            ("up",False),("print",None),
-            ("down",True),("print",None),
-            ("down",True),("print",None),
-            ("down",False),("print",None),
-            ("rewind",None),
+            ("add",{"test3": "testing"}),("print",None),
+            ("insertRoot",{"test4": "testing"}),("print",None),
+            ("insertRoot",{"test5": "testing"}),("print",None),
+            ("audit", None),
             ("del",True),("print",None),
             ("del",True),("print",None),
-            ("del",False),("print",None),
             ("rewind",None),
-            ("add",{"test": "testing"}),("print",None),
+            ("del",True),
+            ("audit", None),
             ("del",False),
-            ("rewind",None),
-            ("del",True),("print",None),
         ]:
+            if data is not None:
+                print(f"{cmd} {data}")
+            else:
+                print(f"{cmd}")
             if cmd == "stop":
                 return
             if cmd == "print":
                 print(journal)
                 continue
-            if data:
-                print(f"{cmd} {data}")
-            else:
-                print(f"{cmd}")
+            if cmd == "audit":
+                journal.audit()
+                continue
             if cmd == "add":
                 changePath=journal.add(data)
+                with open(os.path.join(changePath,"tdump"),"w") as f:
+                    json.dump(data,f)
+            elif cmd == "insertRoot":
+                changePath=journal.insertRoot(data)
                 with open(os.path.join(changePath,"tdump"),"w") as f:
                     json.dump(data,f)
             elif cmd == "del":

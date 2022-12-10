@@ -324,6 +324,10 @@
                 "type": "address.macro",
                 "desc": "Addresses of a Congregations in the cluster"
             }
+        },
+        "schema": {
+            "type": "any", "default": null,
+            "desc": "Schema for the congregation."
         }
     }, "_CongregationSizeReq_": {
         "type": "composite",
@@ -362,7 +366,7 @@
         }
     }, "cmdFilter.macro": {
         "type": "composite",
-        "desc": "Sent from user to Hallelujah to find the first command in the database, or to Congregation to find the next command. Find by sheetUuid, cmdUuid and cmdVersion, or feed.",
+        "desc": "Sent from user to Hallelujah to find the first command in the database, or to Congregation to find the next command. Find by sheetUuid, cmdUuid, or feed.",
         "sheetUuid": {
             "type": "str", "default": null,
             "desc": "Optional sheet UUID"
@@ -370,10 +374,6 @@
         "cmdUuid": {
             "type": "str", "default": null,
             "desc": "Optional cmd UUID"
-        },
-        "cmdVersion": {
-            "type": "str", "default": null,
-            "desc": "specific version of a command"
         },
         "feed": {
             "type": "str", "default": null,
@@ -411,15 +411,6 @@
                 "type": "str",
                 "desc": "sheet UUID"
             },
-            "version": {
-                "type": "str",
-                "desc": "Version of the command"
-            },
-            "status": {
-                "type": "str",
-                "choice": ["old version", "deleted"],
-                "desc": "Status of this version of the command."
-            },
             "cmd": {
                 "type": "any",
                 "desc": "The command"
@@ -431,10 +422,6 @@
             "sheetUuid": {
                 "type": "str",
                 "desc": "sheet UUID"
-            },
-            "version": {
-                "type": "str",
-                "desc": "Version of the command"
             },
             "name": {
                 "type": "str",
@@ -448,28 +435,41 @@
             "type": "address.macro",
             "desc": "Address of the Congregation where to send another cmdInd for the next command. Or, towards the summit for the first comInd"
         }
+    }, "_schReq_": {
+        "type": "composite",
+        "desc": "Sent by user to Congregation to update the schema.",
+        "schema": {
+            "type": "any",
+            "desc": "New schema"
+        }
+    }, "_schCfm_": {
+        "type": "composite",
+        "desc": "Response to _schReq_",
+        "routing": {
+            "type": "routing.macro"
+        },
+        "Congregation": {
+            "type": "address.macro", "default": null,
+            "desc": "Address of the Congregation to re-send this request"
+        }
     }, "_cmdReq_": {
         "type": "composite",
-        "desc": "Sent by user to Congregation where the cmd is located to update a command, or send to any Congregation to create a new command.",
+        "desc": "Sent by user to Congregation where the cmd is located to update a command.",
         "cmdUuid": {
             "type": "str",
             "desc": "cmd UUID"
-        },
-        "version": {
-            "type": "str",
-            "desc": "Version of the command to update."
-        },
-        "newVersion": {
-            "type": "str", "Default": null,
-            "desc": "New version for the updated command. Not present for a new command."
         },
         "sheetUuid": {
             "type": "str",
             "desc": "sheet UUID"
         },
-        "cmd": {
+        "oldcmd": {
             "type": "any",
-            "desc": "New command, or new version, or empty {} to delete the command"
+            "desc": "Old command, that is being updated"
+        },
+        "newcmd": {
+            "type": "any",
+            "desc": "New command, {} to delete the command"
         },
         "routing": {
             "type": "routing.macro"
@@ -486,7 +486,7 @@
         },
         "status": {
             "type": "str",
-            "choice": ["redirect", "inactive", "updated", "newer version", "no change", "timeout", "feed in use"],
+            "choice": ["redirect", "deleted", "created", "updated", "wrong version", "no change", "timeout"],
             "desc": "Update status."
         },
         "feedsInUse": {
@@ -504,11 +504,11 @@
             "type": "str",
             "desc": "sheet UUID"
         },
-        "version": {
+        "oldname": {
             "type": "str",
-            "desc": "Version of the old sheet that's being updated."
+            "desc": "Old new name for sheet"
         },
-        "name": {
+        "newname": {
             "type": "str",
             "desc": "New name for sheet"
         },

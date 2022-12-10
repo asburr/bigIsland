@@ -1,11 +1,9 @@
 {
     "name": "samples",
     "uuid": "e66f0aec-e9e9-4df4-987e-136c63c23f5c",
-    "version": "1",
     "cmds": [
         {
             "uuid": "6026697b-bc99-493f-b970-42107f95a3f7",
-            "version": "1",
             "cmd": "files",
             "files":  {
                 "root": "samples.files",
@@ -21,7 +19,6 @@
             }
         }, {
             "uuid": "720ff709-f7eb-47db-bff1-a22ee4202582",
-            "version": "1",
             "cmd": "loadf",
             "loadf":  {
                 "feed": "samples.data",
@@ -31,7 +28,6 @@
             }
         }, {
             "uuid": "483d3420-38a8-4be0-8885-594e0643aa9f",
-            "version": "1",
             "cmd": "expand",
             "expand":  {
                 "feed": "samples.data.company",
@@ -49,7 +45,6 @@
             }
         }, {
             "uuid": "d1a88ec3-f1bb-4f50-a46a-da94c73f20e7",
-            "version": "1",
             "cmd": "loads",
             "loads":  {
                 "feed": "samples.daily_stats",
@@ -59,7 +54,6 @@
             }
         }, {
             "uuid": "2a07b234-5bd4-44f1-9946-35a7721ddda9",
-            "version": "1",
             "cmd": "alert",
             "alert":  {
                 "input": "samples.files.new",
@@ -69,7 +63,6 @@
             }
         }, {
             "uuid": "6553d38a-a765-4d17-8a2d-16ca1de76d0c",
-            "version": "1",
             "cmd": "alert",
             "alert":  {
                 "feed": "samples.alert",

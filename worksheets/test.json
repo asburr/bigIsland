@@ -1,11 +1,9 @@
 {
     "name": "test",
     "uuid": "cde66089-fda0-4e5d-bd3f-d25c417b9adc",
-    "version": "1",
     "cmds": [
         {
             "uuid": "06a44999-5125-44d8-98bf-726e4eac9b0c",
-            "version": "1",
             "cmd": "test",
             "debug": true,
             "test": {

@@ -13,7 +13,7 @@ import json
 import os
 from inspect import currentframe
 from magpie.src.mistype import MIsType
-from magpie.src.mjournal import MJournal
+from magpie.src.mjournal import MJournal, MJournalChange
 import re
 import argparse
 import traceback
@@ -25,14 +25,39 @@ import shutil
 class MWorkSheetException(Exception):
     pass
 
-class MWorksheetsChange:
-    def __init__(self, worksheet: str, cmd: str, selected: dict):
+
+class MWorksheetsCmdChange(MJournalChange):
+    """
+    A change to a command.
+    """
+    def __init__(self, worksheet: str, cmduuid: str, selected: dict):
         self.ws = worksheet
-        self.cmd = cmd
+        self.cmduuid = cmduuid
         self.selected = selected
 
 
+class MWorksheetsSheetChange(MJournalChange):
+    """
+    A change to a worksheet.
+    """
+    def __init__(self, worksheetuuid: str, worksheetname: str):
+        self.wsuuid = worksheetuuid
+        self.worksheetname = worksheetname
+
+
+class MWorksheetsRebaseChange(MJournalChange):
+    """
+    A rebase to a new root.
+    """
+    def __init__(self, sourcePath:str):
+        self.sourcePath = sourcePath
+        pass
+
+
 class MCmd:
+    """
+    Wrapper for command dictionary, to access dictionary using methods.
+    """
     @staticmethod
     def name(cmd: dict):
         """ Get the type/name of the command """
@@ -102,7 +127,11 @@ class MWorksheets:
             raise Exception("Failed to find worksheet dir " + self.dir)
         # Read schema.
         self.schemaPath = os.path.join(self.dir, "worksheetHelp.json")
-        try:
+        if not os.path.exists(self.dir):
+            os.mkdir(self.dir)
+        if not os.path.exists(self.schemaPath):
+            self.changeSchema({})
+        else:
             with open(self.schemaPath,"r") as f:
                 try:
                     self.schema = json.load(f)
@@ -110,29 +139,48 @@ class MWorksheets:
                     raise Exception("JSON error in " + self.schemaPath + " " + str(e))
                 except Exception as e:
                     raise Exception("Failed to parse " + self.schemaPath + " " + str(e))
-        except Exception as e:
-            raise Exception("Failed to read " + self.schemaPath + str(e))
         self.wsl = []
         self.ws = {}
         self.wsname = {}
         self.feedNames = set()
         self.changesPath = os.path.join(self.dir,".changes")
         self.changes = MJournal(self.changesPath)
-        if self.changes.empty():
-            self.pull(self.dir)
-        else:
-            self.__readWorksheets(self.changes.currentPath())
+        p = self.changes.currentPath()
+        if p:
+            self.__readWorksheets(p)
+
+    def changeSchema(self, schema: dict):
+        """ Replace schema without any validation of current commands against the new schema. """
+        with open(self.schemaPath,"w") as f:
+            json.dump(schema,f)
+        self.schema = schema
 
     def copySchema(self, dir:str):
         """ Copy the worksheets schema to another directory.
         """
         shutil.copy(self.schemaPath,dir)
 
+    def empty(self):
+        """
+        Empties the worksheet that's in memory,
+        then call save() to erase the disk copy.
+        """
+        self.__readWorksheets(dir=None)
+
+    def isEmpty(self) -> bool:
+        """
+        Return True when there are no worksheets in memory.
+        """
+        if self.ws:
+            return False
+        return True
+        
     def __readWorksheets(self, dir:str):
         self.wsl = []
         self.ws = {}
         self.wsname = {}
         self.feedNames = set()
+        self.feeds = {}
         if not dir:
             return
         for fn in os.listdir(path=dir):
@@ -163,7 +211,6 @@ class MWorksheets:
                 traceback.print_exc()
                 raise Exception("Failed to parse " + dfn + " " + str(e))
         self.expandcmds()
-        self.feeds = {}
         for ws in self:
             for cmdj in ws["cmds"]:
                 feeds = self.cmdFeedRef(cmdj)
@@ -207,8 +254,17 @@ class MWorksheets:
         for cmd in sheet["cmds"]:
             yield cmd
 
+    def getWorkSheetUuid(self, cmduuid: str) -> str:
+        for ws in self:
+            for cmd in ws["cmds"]:
+                if cmd["uuid"] == cmduuid:
+                    return ws["uuid"]
+        return None
+
     def __str__(self) -> str:
         s = "List of Sheets and their commands and the feed(s) they consume and output\n"
+        if self.isEmpty():
+            s += "No worksheets"
         for ws in self:
             s += "Sheet(" + ws["name"]+":"+ws["uuid"]+")\n"
             for cmd in ws["cmds"]:
@@ -298,6 +354,7 @@ class MWorksheets:
         return self.ws[title]["cmds"]
 
     def addSheet(self, title: str) -> str:
+        """ Add a worksheet """
         if title in self.ws:
             return "Duplicate name"
         self.ws[title] = {}
@@ -328,11 +385,12 @@ class MWorksheets:
                 nxtcmd = cmd.get(k,None)
                 # if nxtcmd is None:
                 #     continue
-            field = parent+"."+k
-            if len(parent) == 0:
-                field = k
-            if self._paramscmd(at, nxtcmd, field, schema[k], params, selected, description):
-                retval = True
+            if nxtcmd is not None:
+                field = parent+"."+k
+                if len(parent) == 0:
+                    field = k
+                if self._paramscmd(at, nxtcmd, field, schema[k], params, selected, description):
+                    retval = True
         if cmd is not None and "__edit__" in cmd:
             for k in cmd["__edit__"].keys():
                 selected[parent+"."+k] = cmd["__edit__"][k]
@@ -439,6 +497,8 @@ class MWorksheets:
             if cmd is not None:
                 return self._paramscmd(at, cmd, parent, self.schema[t], params, selected, description)
         else:
+            print(cmd)
+            print(schema)
             raise Exception("Unexpected type " + t)
         if "desc" in schema:
             description[parent] = schema["desc"]
@@ -612,7 +672,7 @@ class MWorksheets:
         else:
             raise Exception("Unexpected type " + t)
 
-    def updateCmd(self, wsn: str, cmdUuid: dict, selected: dict, changelog:bool=True) -> str:
+    def updateCmd(self, wsn: str, cmdUuid: str, oldselected: dict, newselected: dict, changelog:bool=True) -> str:
         """ Update values in command from selected values.
             Inserts the selected values into the change log at the current
             position. Saves the version of the worksheet such that a call
@@ -621,14 +681,17 @@ class MWorksheets:
         """
         if cmdUuid:
             cmd = self.getCmdUuid(uuid=cmdUuid)
-            if int(cmd["version"]) < 0:
-                return "Command deleted"
+            (params, selected, description) = self.paramsCmd(cmd,at=None)
+            if oldselected != selected:
+                return "wrong version"
             cmdname = cmd["cmd"]
             backup = copy.deepcopy(cmd)
             # Remove command from all the feeds.
             for feed in self.cmdFeed(cmd):
                 del self.feeds[feed]
         else:
+            if selected:
+                return "wrong version"
             backup = None
             cmdname = list(selected.keys())[0]
             cmdname = cmdname[0:cmdname.index(".")]
@@ -681,13 +744,18 @@ class MWorksheets:
             else:
                 del self.ws[wsn]["cmds"][-1]
         elif changelog:
-            self.save(self.changes.add(MWorksheetsChange(wsn,cmd["uuid"],selected)))
+            self.save(self.changes.add(MWorksheetsCmdChange(wsn,cmd["uuid"],selected)))
         return error
 
     def save(self, dir:str):
+        """
+        Save worksheets to disk
+        """
         for ws in self:
           with open(os.path.join(dir,f'{ws["name"]}.json'), "w") as f:
               f.write(json.dumps(ws, indent=4))
+        with open(os.path.join(dir,"worksheetHelp.json"), "w") as f:
+          f.write(json.dumps(self.schema, indent=4))
 
     def _purgeCmd(self, cmd: any, schema: any) -> None:
         if cmd is None:
@@ -728,29 +796,71 @@ class MWorksheets:
             "uuid": cmduuid,
             "version": str(-version)
         }
-        self.save(self.changes.add(MWorksheetsChange(wsn,cmduuid,selected={})))
+        self.save(self.changes.add(MWorksheetsCmdChange(wsn,cmduuid,selected={})))
 
     def deleteCmdByOutputs(self, wsn: str, outputs: str) -> None:
         cmd = self.getCmd(outputs)
         self.deleteCmd(cmd["uuid"])
 
-    def pull(self, worksheetdir:str) -> str:
-        """ Pull the worksheets into the change log. Redoing the changes upto
-            current change, or until an error and the code is returned.
+    def addChanges(self, other: "MWorksheets") -> bool:
         """
-        current = self.changes.current()
-        if current == self.changes.head():
-            current = None
-        self.changes.rewind()
-        self.changes.add({})
-        self.__readWorksheets(worksheetdir)
-        self.save(self.changes.currentPath())
-        while current:
-            error = self.redo()
-            if error:
-                return error
-            if self.changes.current() == current:
-                return
+        Adds changes to self, for each different sheet and cmd detected in other.
+        """
+        changes = 0
+        for ows in other: # Thru other's sheet.
+            sws = self.ws.get(ows["uuid"],None)
+            if not sws: # New worksheet.
+                changes += 1
+                self.changes.add(MWorksheetsSheetChange(sws["uuid"],sws["name"]))
+            else:
+                if sws["name"] != ows["name"]: # Sheet has a new name.
+                    changes += 1
+                    self.changes.add(MWorksheetsSheetChange(sws["uuid"],sws["name"]))
+            for ocmd in ows["cmds"]: # Thru other's cmds
+                (params, oselected, description) = other.paramsCmd(ocmd,at=None)
+                scmd = self.getCmdUuid(ocmd["uuid"])
+                if scmd: # self has other's cmd.
+                    (params, sselected, description) = self.paramsCmd(scmd,at=None)
+                    if oselected == sselected: # No change to the command.
+                        continue
+                changes += 1
+                self.changes.add(MWorksheetsCmdChange(ows["uuid"],ocmd["uuid"],oselected))
+        return changes > 0
+
+    def pull(self, worksheetdir:str):
+        """
+        Put the worksheets into the root of the change log.
+        Walk thru each command, creating new changes for any difference.
+        Version is not relevant. DB is the master copy due to it being
+        what is running. The local copy is the changes that need to be deployed
+        to  upgrade the DB with the local changes. Commands are never deleted
+        but they remain in the DB as an empty command. 
+        """
+        # Delete all change prior to current root.
+        self.changes.prune()
+        if self.changes.currentPath():
+            oldroot = MWorksheets(self.changes.currentPath())
+        else:
+            oldroot = None
+        # Add worksheets as the new root.
+        newroot = self.changes.insertRoot(MWorksheetsRebaseChange(worksheetdir))
+        # Save DB as the new root
+        ws = MWorksheets(worksheetdir)
+        ws.__readWorksheets(worksheetdir)
+        ws.save(newroot)
+        self.__readWorksheets(newroot)
+        if oldroot:
+            # Add local changes for difference between new Root and old root
+            if not self.addChanges(oldroot):
+                # new root and old root are the same!
+                self.changes.rewind()
+                # Delete new root
+                self.changes.delete()
+                # reinstate old root.
+                self.__readWorksheets(self.changes.currentPath())
+            else:
+                # Rewind to the oldest change, which is back to the new root.
+                self.changes.rewind()
 
     def getCurrentChange(self) -> (str,dict):
         """ Return the wsuuid and cmd for the first change .
@@ -795,8 +905,7 @@ class MWorksheets:
         return error
 
     def deleteNextChange(self) -> bool:
-        """ Deletes the next change.
-        """
+        """ Deletes the next change. """
         self.changes.delete()
 
     def _feedComposite(self, cmd: any, schema: any, feeds: list) -> None:
@@ -829,6 +938,7 @@ class MWorksheets:
             self.feed_handlers[t](cmd, schema, feeds)
 
     def cmdFeed(self, cmd: dict) -> list:
+        """ Return a list of names of feeds that the command outputs. """
         cmdname = cmd["cmd"]
         feeds = []
         self.expandingcmd = cmd[cmdname]
@@ -859,6 +969,7 @@ class MWorksheets:
             self.feedRef_handlers[t](cmd, schema, feeds)
 
     def cmdFeedRef(self, cmd: any) -> list:
+        """ Return a list of names of feed references that the command inputs. """
         feeds = []
         cmdname = cmd["cmd"]
         self._feedRefcmd(cmd[cmdname], self.schema[cmd["cmd"]], feeds)
@@ -868,6 +979,7 @@ class MWorksheets:
         for k in schema.keys():
             if k in self.keyfields:
                 continue
+            print(f"key={k}")
             self._inputcmd(cmd.get(k,None), schema[k], inputs)
 
     def _inputListComposite(self, cmd: any, schema: any, inputs: list) -> None:
@@ -875,25 +987,6 @@ class MWorksheets:
             title = self._inputComposite(j, schema, inputs)
             if title:
                 return title
-
-    def _inputcmd(self, cmd: any, schema: any, inputs: list) -> None:
-        if schema["type"] == "feed":
-            if cmd is None:
-                if "default" in schema:
-                    inputs.append(schema["default"])
-            else:
-                inputs.append(cmd)
-            return
-        t = schema["type"]
-        if t in self.input_handlers:
-            self.input_handlers[t](cmd, schema, inputs)
-        return
-
-    def cmdinput(self, cmd: any) -> list:
-        cmdname = cmd["cmd"]
-        inputs = []
-        self._inputcmd(cmd[cmdname], self.schema[cmdname], inputs)
-        return inputs
 
     def _Error(self, stack: list, error:str) -> str:
         cf = currentframe()
@@ -1060,6 +1153,7 @@ class MWorksheets:
         return self.verify_handlers[t](stack, cmd, schema)
 
     def verifycmd(self, cmd: dict) -> str:
+        """ Verify command against the Schema. """
         name = cmd["cmd"]
         if name not in self.schema:
             return self._Error([], "Unexpected cmd name " + name)
@@ -1068,22 +1162,25 @@ class MWorksheets:
             return "Error in cmd " + name + " " + error
 
     def verifycmds(self, j: list) -> str:
+        """ Verify commands against the Schema. """
         for cmd in j:
             error = self.verifycmd(cmd)
             if error:
                 return error
 
     def blocked(self) -> list:
+        """ Return a list of cmds that are blocked. """
         return [cmd for feed,cmd in self.feeds.items() if cmd["__state__"] == "blocked"]
 
     def pending(self) -> dict:
+        """ Return a list of cmds that are pending. """
         for feed,cmd in self.feeds.items():
             if cmd["__state__"] == "pending":
                 return cmd
         return None
 
-    # Returns list of newly pending commands
     def ran(self, cmd) -> list:
+        """ Returns list of newly pending commands """
         feeds = self.cmdFeed(cmd)
         cmds = []
         for feed in feeds:
@@ -1092,7 +1189,7 @@ class MWorksheets:
             for cmd in self.feeds.values():
                 if cmd["__state__"] == "blocked":
                     cmd["__state__"] = "pending"
-                    for feed in self.cmdinput(cmd):
+                    for feed in self.cmdFeedRef(cmd):
                        if self.feeds[feed]["__state__"] != "ready":
                            cmd["__state__"] == "blocked"
                            break
@@ -1105,10 +1202,16 @@ class MWorksheets:
         parser = argparse.ArgumentParser(description="Worksheet")
         parser.add_argument('dir', help="worksheet dir")
         parser.add_argument('backup', help="worksheet backup dir")
+        parser.add_argument('master', help="worksheet master copies")
         args = parser.parse_args()
         try:
             ws = MWorksheets(args.dir)
+            print(ws)
+            print(f"Pulling {args.master}")
+            ws.pull(args.master)
+            print(ws.changes)
             ws.expandcmds()
+            print(ws)
         except Exception:
             traceback.print_exc()
             return
@@ -1141,6 +1244,13 @@ class MWorksheets:
                 print("    " + feed + " " + cmd["__state__"])
         ws.save(args.backup)
         print("Save to dir named:"+args.backup)
+        # add cmd
+        (params, oldselected, description) = ws.paramsCmd(cmd,"files")
+        # selected = copy.copy(oldselected)
+        selected  = {}
+        ws.updateCmd(ws.getWorkSheetUuid(cmd["uuid"]),cmd["uuid"],oldselected,selected)
+        print(ws.changes)
+
 
 if __name__ == "__main__":
     MWorksheets.main()

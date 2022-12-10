@@ -71,11 +71,13 @@ class Hallelujah(RootH,threading.Thread):
         v={
             "params": {
                 "filters": self.filters,
+                "cmdUuid": None,
                 "routing": True
             },
             "addr":self.congregation_addr
         }
         self.cmdindTimer.start(k=1,v=v)
+        self.dbworksheets.empty()
         self.sendReq(
             title="_cmdInd_",
             params=v["params"],
@@ -84,7 +86,8 @@ class Hallelujah(RootH,threading.Thread):
         while self.dbworksheets_state == "pulling":
             time.sleep(1)
         # Case when DB is older than local's root.
-        error = self.local.pull(self.dbworksheets.dir)
+        error = self.worksheets.pull(self.dbworksheets.dir)
+        print(self.worksheets)
         self.dbworksheets_state = None
         return error
 
@@ -93,9 +96,11 @@ class Hallelujah(RootH,threading.Thread):
             towards the summit congregation. Or, resend to the next congregation.
             Otherwise, no more cmds and then the worksheet is complete.
         """
-        if "cmd" in cmd:
-            (params, selected, description) = self.dbworksheets.paramsCmd(cmd=cmd,at=None)
-            self.dbworksheets.updateCmd(cmd["cmd"]["uuid"], None, selected, changelog=False)
+        p = cmd["params"]
+        c = p["cmd"]
+        if c:
+            (params, selected, description) = self.dbworksheets.paramsCmd(cmd=c,at=None)
+            self.dbworksheets.updateCmd(c["uuid"], None, selected, changelog=False)
         # Get params from timer before stopping it.
         v = self.cmdreqTimer.get(1)
         self.cmdindTimer.stop(1)
@@ -105,8 +110,8 @@ class Hallelujah(RootH,threading.Thread):
             self.dbworksheets_state = "built"
             return
         # More redirections, copy the routing indicator and address from the response.
-        v["params"]["routing"] = cmd["routing"]
-        v["addr"] = cmd["Congregation"]
+        v["params"]["routing"] = p["routing"]
+        v["addr"] = p["Congregation"]
         self.cmdindTimer.start(k=1,v=v)
         self.sendReq(
             title="_cmdInd_",
@@ -160,23 +165,21 @@ class Hallelujah(RootH,threading.Thread):
         """
         v = self.cmdreqTimer.get(1)
         self.cmdreqTimer.stop(1)
-        if "Congregation" in cmd: # Redirect request.
-            v["addr"] = cmd["Congregation"]
-        elif cmd["first"] == True: # Resend toward summit.
-            pass
+        p = cmd["params"]
+        if "Congregation" in p: # Redirect request.
+            v["params"]["routing"] = p["routing"]
+            self.cmdreqTimer.start(k=1,v=v)
+            self.sendReq(
+                title="_cmdReq_",
+                params=v["params"],
+                remoteAddr=p["Congregation"]
+            )
         else:
-            if cmd["status"] == "updated":
+            if p["status"] == "updated":
                 self.dbworksheets_state = "pushed"
             else:
                 self.dbworksheets_state = "failed"
-                self.error = cmd["status"]
-            return
-        self.cmdreqTimer.start(k=1,v=v)
-        self.sendReq(
-            title="_cmdReq_",
-            params=v["params"],
-            remoteAddr=v["addr"]
-        )
+                self.error = p["status"]
                 
     def tick(self) -> bool:
         """ Handle timeout with retransmit to the local congregation. """
@@ -206,44 +209,6 @@ class Hallelujah(RootH,threading.Thread):
     def run(self) -> None:
         self.poll()
 
-    def stop(self) -> None:
-        print("STOPP")
-
-class HJ_API:
-    """
-    The API for Hallelujah. Creates the Hallelujah process, manages the interactions
-    between synchronized user requests and asynchronous database messaging.
-    """
-    def __init__(self, congregationPort: int, worksheetdir: str):
-        self.hj = Hallelujah(
-            congregationPort=congregationPort,
-            worksheetdir=worksheetdir
-        )
-
-    def stop(self) -> None:
-        """ Stop the API thread """
-        if self.hj:
-            self.hj.stop()
-
-    def local(self) -> MWorksheets:
-        """ Get the local worksheets. """
-        return self.hj.worksheets
-
-    def pull(self) -> str:
-        """ Rebase local worksheets with what is in the database. """
-        self.hj.pull()
-
-    def push(self, description: str) -> list:
-        """ Release local worksheets to the database.
-        1. Push worksheet into database.
-        2. Return failure for each cmd and sheet with an older version.
-        3. Get worksheet from database.
-        4. local.changeRoot(worksheet).
-        5. Not failures to report, there's no changes to apply.
-        6. local.newRoot() - this purges the old change log, so the worksheets
-           cannot be undone beyond the recent pushed version.
-        """
-
     @staticmethod
     def main():
         parser = argparse.ArgumentParser(description="Hallelujah tester")
@@ -253,7 +218,7 @@ class HJ_API:
         args = parser.parse_args()
         if args.debug:
             MLogger.init("DEBUG")
-        h = HJ_API(
+        h = Hallelujah(
                 congregationPort=int(args.port),
                 worksheetdir=args.dir
             )
@@ -261,4 +226,4 @@ class HJ_API:
 
 
 if __name__ == "__main__":
-    HJ_API.main()
+    Hallelujah.main()
