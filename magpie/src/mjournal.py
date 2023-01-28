@@ -26,13 +26,18 @@ class MJournalChange:
     """
     def __init__(self):
         self.when = MZdatetime().strftime()
-        pass
 
     def json(self):
         d={"type": self.__class__.__name__}
         for k, v in self.__dict__.items():
             d[k] = v
         return d
+
+
+class MJournalChangeTest(MJournalChange):
+    def __init__(self, label:str):
+        super().__init__()
+        self.label=label
 
 
 class MJournal:
@@ -82,8 +87,12 @@ class MJournal:
             self.log = None
         self.audit()
 
-    def empty(self) -> bool:
+    def isempty(self) -> bool:
         return not os.path.isfile(self.__headPath)
+
+    def empty(self) -> bool:
+        shutil.rmtree(self.dir)
+        os.mkdir(self.dir)
 
     def audit(self):
         """ Audit change directory. """
@@ -116,6 +125,7 @@ class MJournal:
                                     with open(self.__currentPath, "w") as f:
                                         json.dump(head,f)
                         else:
+                            print(p)
                             log = json.load(f)
                             if log[self.__next__]:
                                 nextp = os.path.join(self.dir,f"{log[self.__next__]}.log")
@@ -224,7 +234,7 @@ class MJournal:
             return os.path.join(self.dir,self.log[self.__previous__])
         return None
 
-    def add(self, change: any) -> str:
+    def add(self, change: MJournalChange) -> str:
         """
         A new change after the most resent change to become the
         current change.
@@ -238,7 +248,7 @@ class MJournal:
                     self.__previous__: "",
                     self.__this__: newUuid,
                     self.__next__: "",
-                    self.__change__: change
+                    self.__change__: change.json()
                 }
                 json.dump(newlog,f)
             with open(self.__headPath, "w") as f:
@@ -251,8 +261,9 @@ class MJournal:
                 self.__previous__: thisUuid,
                 self.__this__: newUuid,
                 self.__next__: nextUuid,
-                self.__change__: change
+                self.__change__: change.json()
             }
+            print(json.dumps(newlog))
             with open(newlogfile, "w") as f:
                 json.dump(newlog,f)
             # 2 Nextlog is linked back to the newlog.
@@ -411,8 +422,8 @@ class MJournal:
         shutil.rmtree(args.dir)
         journal = MJournal(args.dir)
         for cmd, data in [
-            ("add",{"test1": "testing"}),("print",None),
-            ("add",{"test2": "testing"}),("print",None),
+            ("add",MJournalChangeTest("test1")),("print",None),
+            ("add",MJournalChangeTest("test2")),("print",None),
             ("audit", None),
             ("del",True),
             ("rewind",None),("print",None),
@@ -423,9 +434,9 @@ class MJournal:
             ("audit", None),
             ("del",False),
             ("rewind",None),("print",None),
-            ("add",{"test3": "testing"}),("print",None),
-            ("insertRoot",{"test4": "testing"}),("print",None),
-            ("insertRoot",{"test5": "testing"}),("print",None),
+            ("add",MJournalChangeTest("test3")),("print",None),
+            ("insertRoot",MJournalChangeTest("test4")),("print",None),
+            ("insertRoot",MJournalChangeTest("test5")),("print",None),
             ("audit", None),
             ("del",True),("print",None),
             ("del",True),("print",None),
