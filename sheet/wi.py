@@ -14,11 +14,10 @@
 # Usage:
 # export PYTHONPATH=.
 # python3 sheet/wi.py
-import socket
-import os
 import argparse
 import traceback
 import json
+import uuid
 try:
     import wx
     import wx.grid
@@ -30,10 +29,10 @@ except Exception:
     exit(1)
 from magpie.src.musage import MUsage
 from magpie.src.mudp import MUDP, MUDPBuildMsg
-from magpie.src.mworksheets import MWorksheets, MCmd
+from magpie.src.mworksheets import MCmd
 from sheet.QueryParams import QueryParams
 from sheet.Grid import WiGrid
-from hallelujah.allelujah import Hallelujah
+from hallelujah.hallelujah import Hallelujah
 
 
 class WiSampleGrid(wx.Frame):
@@ -102,30 +101,40 @@ class WiSampleGrid(wx.Frame):
     
 class WiWS(wx.Frame):
     def __init__(self, debug: bool, wsdir: str, congregation: (str,int)):
-        self.hj = 
+        """
+        Connects to the DB and reads (hj) the worksheets, local differences are
+        "new" changes and the database version of the worksheet is the current
+        version.
+        """
+        self.hj = Hallelujah(
+                congregationHost=congregation[0],
+                congregationPort=congregation[1],
+                worksheetdir=wsdir
+            )
+        self.ws = self.hj.worksheets
         wx.Frame.__init__(self, parent=None, title="Worksheet")
-        self.rootHJ.sendReq(title="_conReq_", params={}, remoteAddr=congregation)
-        try:
-            self.ws = MWorksheets(wsdir)
-        except Exception as e:
-            traceback.print_exc()
-            wx.MessageBox(e.__class__.__name__+":"+str(e), "Error in worksheet", wx.OK, self)
-            self.Layout()
-            self.Show()
-            raise e
         self.congregation = congregation
         boxSizer = wx.BoxSizer(wx.VERTICAL)
         self.panel = wx.Panel(self)
         self.cmd = None
-        wsns = self.ws.titles()
-        wsns.append("new worksheet")
-        self.ws_selection = wx.ComboBox(self.panel, choices=wsns)
+        self.currentChange = wx.StaticText(self.panel,label="")
+        boxSizer.Add(self.currentChange, proportion=0, flag=wx.EXPAND)
+        self.ws_selection1 = wx.ComboBox(self.panel, choices=[])
+        self.ws_selection1.Bind(wx.EVT_COMBOBOX, self.ws_selectedDEL)
+        boxSizer.Add(self.ws_selection1, proportion=0, flag=wx.EXPAND)
+        self.ws_selection2 = wx.ComboBox(self.panel, choices=[])
+        self.ws_selection2.Bind(wx.EVT_COMBOBOX, self.ws_selectedREDO)
+        boxSizer.Add(self.ws_selection2, proportion=0, flag=wx.EXPAND)
+        self.ws_selection3 = wx.ComboBox(self.panel, choices=[])
+        self.ws_selection3.Bind(wx.EVT_COMBOBOX, self.ws_selectedUNDO)
+        boxSizer.Add(self.ws_selection3, proportion=0, flag=wx.EXPAND)
+        self.ws_selection = wx.ComboBox(self.panel, choices=[])
         # Changing choices:
         #   self.ws_selection.SetItems(wsns)
         #   self.ws_selection.SetValue(current_value)
-        self.ws_selection.SetValue("Please select worksheet")
-        self.ws_selection.Bind(wx.EVT_COMBOBOX, self.ws_selected)
+        self.ws_selection.Bind(wx.EVT_COMBOBOX, self.ws_selectedNEW)
         boxSizer.Add(self.ws_selection, proportion=0, flag=wx.EXPAND)
+        self.refreshSelection()
         self.addButton = wx.Button(self.panel, label="ADD CMD")
         self.addButton.Bind(wx.EVT_BUTTON, self.on_addcmd)
         self.addButton.Hide()
@@ -138,10 +147,29 @@ class WiWS(wx.Frame):
         self.Layout()
         self.Show()
         self.usage = MUsage()
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(5)
-        s.bind(("", 0))
-        self.mudp = MUDP(s, skipBad=False)
+
+    def refreshSelection(self):
+        change = self.ws.changes.currentChange()
+        self.currentChange.SetLabel(str(change))
+        if change:
+            changes=[str(change)]
+        else:
+            changes=[]
+        self.ws_selection3.SetItems(changes)
+        self.ws_selection3.SetValue("UNDO change")
+        change = self.ws.changes.nextChange()
+        if change:
+            changes=[str(change)]
+        else:
+            changes=[]
+        self.ws_selection1.SetItems(changes)
+        self.ws_selection1.SetValue("DEL change")
+        self.ws_selection2.SetItems(changes)
+        self.ws_selection2.SetValue("REDO change")
+        wsns = self.ws.titles()
+        wsns.append("new worksheet")
+        self.ws_selection.SetItems(wsns)
+        self.ws_selection.SetValue("NEW change")
 
     def on_addcmd(self, event):
         wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
@@ -189,8 +217,33 @@ class WiWS(wx.Frame):
         self.Show()
         event.Skip(False)
 
-    def ws_selected(self, event):
-        print(event)
+    def ws_selectedDEL(self, event):
+        error = self.hj.worksheets.redo()
+        if len(error) > 0:
+            wx.MessageBox(error,"",wx.OK, self)
+            event.Skip(False)
+            return
+        self.refreshSelection()
+        event.Skip(False)
+
+    def ws_selectedREDO(self, event):
+        error = self.hj.worksheets.redo()
+        if len(error) > 0:
+            wx.MessageBox(error,"",wx.OK, self)
+            event.Skip(False)
+            return
+        self.refreshSelection()
+        event.Skip(False)
+
+    def ws_selectedUNDO(self, event):
+        if not self.hj.worksheets.undo():
+            wx.MessageBox("Nothing to undo","",wx.OK, self)
+            event.Skip(False)
+            return
+        self.refreshSelection()
+        event.Skip(False)
+
+    def ws_selectedNEW(self, event):
         if self.ws_selection.GetValue() == "new worksheet":
             self.addButton.Hide()
             QueryParams(parent=self, title="New worksheet name",
@@ -199,6 +252,7 @@ class WiWS(wx.Frame):
             wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
             self.addButton.Show()
             self.grid.update(self.titles, self.ws.inputCmdOutput(wsn))
+            self.refreshSelection()
             self.panel.Layout()
             self.Layout()
             self.Show()
@@ -213,7 +267,7 @@ class WiWS(wx.Frame):
         if not wsn:
             event.Skip()
             return
-        error = self.ws.addSheet(wsn)
+        error = self.ws.addSheet(uuid.uuid4(),wsn)
         if error:
             wx.MessageBox(
                 "Faild: "+error,
@@ -265,8 +319,8 @@ class WiWS(wx.Frame):
                     wx.OK, self)
                 event.Skip()
                 return
-            cmd = self.ws.getCmdUuid(uuid=qp.data)
-            self.ws.purgeCmd(cmd)
+            # cmd = self.ws.getCmdUuid(uuid=qp.data)
+            # self.ws.purgeCmd(cmd)
             self.grid.update(self.titles, self.ws.inputCmdOutput(wsn))
         elif qp.res == wx.CANCEL:
             self.ws.deleteCmdByOutputs(wsn=wsn,outputs=qp.data)
@@ -284,9 +338,9 @@ class WiWS(wx.Frame):
         if args.dir is None:
             args.dir = "worksheets"
         if args.ip is None:
-            args.ip = "127.0.0.1"
+            args.ip = ""
         if args.port is None:
-            args.port = "1234"
+            args.port = "59990"
         app = wx.App(0)
         # TODO; change the iconized image.
         # import Tkinter
@@ -295,7 +349,7 @@ class WiWS(wx.Frame):
         # img = Tkinter.Image("photo", file="appicon.gif")
         # root.tk.call('wm','iconphoto',root._w,img)
         try:
-            WiWS(debug=args.debug, wsdir=args.dir, congregation=(args.ip, args.port))
+            WiWS(debug=args.debug, wsdir=args.dir, congregation=(args.ip, int(args.port)))
         except Exception:
             traceback.print_exc()
             return

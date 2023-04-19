@@ -103,7 +103,7 @@
             }
         }, "errors": {
             "type": "feed", "key": true,
-            "default": "{feed}_errors",
+            "default": "{feed}.errors",
             "desc": "Output feed containing filename and error, for files that failed to load."
         }, "cleanup": {
             "type": "composite", "default": null,
@@ -252,7 +252,7 @@
             "type": "composite", "default": null,
             "add": {
                 "type": "str",
-                "desc": "{typefield}.name or fred.name. Where name is the new field"
+                "desc": "fred.name. Where name is the new field"
             }, "fields": {
                 "type": "listComposites", "default": null,
                 "desc": "List of fields.",
@@ -268,7 +268,7 @@
         "type": "composite",
         "desc": "Email sent to alert of system issues.",
         "feed": {
-            "type": "feed", "default": "{input}_alert", "key": true,
+            "type": "feed", "default": "{input}.alert", "key": true,
             "desc": "Name for the feed of alerts"
         }, "input": {
             "type": "feedRef", "default": null,

@@ -126,6 +126,7 @@ class Congregation(RootHJ):
         self.cluster = Cluster(self.processdir,connectaddr)
         p = os.path.join(processdir,".worksheets")
         self.ws = MWorksheets(p)
+        print(self.ws)
 
     def ConReq(self, cmd: dict):
         """

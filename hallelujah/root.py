@@ -26,8 +26,11 @@ class RootH():
  RootH: Root for a process that is communicating in the database.
  Default behaviour is to allocate a port.
     """
-    def __init__(self, title: str, congregationPort: int, port: int = 0):
-        self.host = socket.gethostname()
+    def __init__(self, title: str, congregationPort: int, congregationHost: str="", port: int = 0):
+        if congregationHost:
+            self.host = congregationHost
+        else:
+            self.host = socket.gethostname()
         self.congregation_addr = (self.host, congregationPort)
         self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket_timeout = 5.0

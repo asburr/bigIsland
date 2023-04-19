@@ -28,19 +28,17 @@ class Hallelujah(RootH,threading.Thread):
  A local copy of the worksheet is maintained. The user can pull
  the latest changes from the database, or push the local changes into the
  database.
- This class is not used directly, see instead HJ_API.
     """
-    def __init__(self, congregationPort: int, worksheetdir: str):
+    def __init__(self, congregationPort: int, worksheetdir: str, congregationHost: str=""):
         try:
             threading.Thread.__init__(self)
-            RootH.__init__(self,title="hj", congregationPort=congregationPort)
+            RootH.__init__(self,title="hj", congregationPort=congregationPort, congregationHost=congregationHost)
             if MLogger.isDebug():
                mlogger.debug(
                    f"{self.title} worksheetdir={worksheetdir}"
                )
             self.worksheets = MWorksheets(worksheetdir)
             self.processCmd.update({
-                "": self.pull,
                 "_cmdRsp_": self.__cmdRsp,
                 "_cmdCfm_": self.__cmdCfm
             })
@@ -62,7 +60,7 @@ class Hallelujah(RootH,threading.Thread):
 
     def pull(self, __cmd: dict = None) -> str:
         """
-        Queries the database for the commands which are pulled into the local
+        Queries the database for the commands and pull them into the local
         worksheet.
         """
         if self.dbworksheets_state:
@@ -84,10 +82,9 @@ class Hallelujah(RootH,threading.Thread):
             remoteAddr=v["addr"]
         )
         while self.dbworksheets_state == "pulling":
+            print(self.dbworksheets_state)
             time.sleep(1)
-        # Case when DB is older than local's root.
         error = self.worksheets.pull(self.dbworksheets.dir)
-        print(self.worksheets)
         self.dbworksheets_state = None
         return error
 
