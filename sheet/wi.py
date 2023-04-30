@@ -119,15 +119,15 @@ class WiWS(wx.Frame):
         self.cmd = None
         self.currentChange = wx.StaticText(self.panel,label="")
         boxSizer.Add(self.currentChange, proportion=0, flag=wx.EXPAND)
-        self.ws_selection1 = wx.ComboBox(self.panel, choices=[])
-        self.ws_selection1.Bind(wx.EVT_COMBOBOX, self.ws_selectedDEL)
-        boxSizer.Add(self.ws_selection1, proportion=0, flag=wx.EXPAND)
-        self.ws_selection2 = wx.ComboBox(self.panel, choices=[])
-        self.ws_selection2.Bind(wx.EVT_COMBOBOX, self.ws_selectedREDO)
-        boxSizer.Add(self.ws_selection2, proportion=0, flag=wx.EXPAND)
-        self.ws_selection3 = wx.ComboBox(self.panel, choices=[])
-        self.ws_selection3.Bind(wx.EVT_COMBOBOX, self.ws_selectedUNDO)
-        boxSizer.Add(self.ws_selection3, proportion=0, flag=wx.EXPAND)
+        self.ws_selectionDEL = wx.ComboBox(self.panel, choices=[])
+        self.ws_selectionDEL.Bind(wx.EVT_COMBOBOX, self.ws_selectedDEL)
+        boxSizer.Add(self.ws_selectionDEL, proportion=0, flag=wx.EXPAND)
+        self.ws_selectionREDO = wx.ComboBox(self.panel, choices=[])
+        self.ws_selectionREDO.Bind(wx.EVT_COMBOBOX, self.ws_selectedREDO)
+        boxSizer.Add(self.ws_selectionREDO, proportion=0, flag=wx.EXPAND)
+        self.ws_selectionUNDO = wx.ComboBox(self.panel, choices=[])
+        self.ws_selectionUNDO.Bind(wx.EVT_COMBOBOX, self.ws_selectedUNDO)
+        boxSizer.Add(self.ws_selectionUNDO, proportion=0, flag=wx.EXPAND)
         self.ws_selection = wx.ComboBox(self.panel, choices=[])
         # Changing choices:
         #   self.ws_selection.SetItems(wsns)
@@ -155,17 +155,17 @@ class WiWS(wx.Frame):
             changes=[str(change)]
         else:
             changes=[]
-        self.ws_selection3.SetItems(changes)
-        self.ws_selection3.SetValue("UNDO change")
+        self.ws_selectionUNDO.SetItems(changes)
+        self.ws_selectionUNDO.SetValue("UNDO change")
         change = self.ws.changes.nextChange()
         if change:
             changes=[str(change)]
         else:
             changes=[]
-        self.ws_selection1.SetItems(changes)
-        self.ws_selection1.SetValue("DEL change")
-        self.ws_selection2.SetItems(changes)
-        self.ws_selection2.SetValue("REDO change")
+        self.ws_selectionDEL.SetItems(changes)
+        self.ws_selectionDEL.SetValue("DEL change")
+        self.ws_selectionREDO.SetItems(changes)
+        self.ws_selectionREDO.SetValue("REDO change")
         wsns = self.ws.titles()
         wsns.append("new worksheet")
         self.ws_selection.SetItems(wsns)
@@ -284,13 +284,21 @@ class WiWS(wx.Frame):
 
     def ws_verify(self, qp: QueryParams) -> str:
         wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
-        return self.ws.updateCmd(wsn=wsn, cmdUuid=qp.data, selected=qp.getSelected())
+        uuid = qp.data
+        cmd = self.ws.getCmdUuid(uuid)
+        if cmd:
+            oldselected=self.ws.paramsCmd(cmd,at=None)
+        else:
+            oldselected={}
+        selected = qp.getSelected()
+        cmdname = list(selected.keys())[0]
+        cmdname=cmdname[0:cmdname.find(".")]
+        return self.ws.updateCmd(wsn=wsn, cmdUuid=uuid, cmdname=cmdname, oldselected=oldselected, selected=selected)
 
     def ws_sample(self, title:str) -> None:
         WiSampleGrid(title=title, remoteAddr=self.congregation, mudp=self.mudp)
 
     def OnRowClick(self, event):
-        print(event)
         row = event.GetRow()
         if row == -1:
             event.Skip(False)

@@ -112,7 +112,7 @@ class MJournal:
         self.__headPath = os.path.join(self.dir,self.__head__)
         self.__currentPath = os.path.join(self.dir,self.__current__)
         self.changeFactoryClass = changeFactoryClass
-        if purge:
+        if os.path.exists(dir) and (purge or not os.path.exists(self.__currentPath)):
             shutil.rmtree(dir)
         if not os.path.isdir(dir):
             self.__newJournal()

@@ -42,6 +42,7 @@ class QueryParams(wx.Frame):
         wx.Frame.__init__(self, parent=parent, title=title, style=wx.RESIZE_BORDER | wx.CLOSE_BOX)
         if on_close is not None:
             self.Bind(wx.EVT_CLOSE, on_close)
+        self.title = title
         self.data = data
         self.verify = verify
         self.sample = sample

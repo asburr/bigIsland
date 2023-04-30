@@ -82,7 +82,6 @@ class Hallelujah(RootH,threading.Thread):
             remoteAddr=v["addr"]
         )
         while self.dbworksheets_state == "pulling":
-            print(self.dbworksheets_state)
             time.sleep(1)
         error = self.worksheets.pull(self.dbworksheets.dir)
         self.dbworksheets_state = None
