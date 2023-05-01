@@ -106,6 +106,7 @@ class WiWS(wx.Frame):
         "new" changes and the database version of the worksheet is the current
         version.
         """
+        self.wsn = None
         self.hj = Hallelujah(
                 congregationHost=congregation[0],
                 congregationPort=congregation[1],
@@ -170,6 +171,12 @@ class WiWS(wx.Frame):
         wsns.append("new worksheet")
         self.ws_selection.SetItems(wsns)
         self.ws_selection.SetValue("NEW change")
+        if self.wsn:
+            self.addButton.Show()
+            self.grid.update(self.titles, self.ws.inputCmdOutput(self.wsn))
+            self.panel.Layout()
+            self.Layout()
+            self.Show()
 
     def on_addcmd(self, event):
         wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
@@ -198,14 +205,14 @@ class WiWS(wx.Frame):
         return self.ws.updateCmd(wsn=wsn, selected=selected)
 
     def wsaddedcmd_close(self, event):
-        wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
+        self.wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
         qp = event.GetEventObject()
         if qp.res != wx.OK:
             event.Skip(False)
             return
         # cmdname = qp.data
         selected = qp.getSelected()
-        error = self.ws.updateCmd(wsn=wsn, selected=selected)
+        error = self.ws.updateCmd(wsn=self.wsn, selected=selected)
         if len(error) > 0:
             wx.MessageBox(
                 error,
@@ -213,7 +220,7 @@ class WiWS(wx.Frame):
                 wx.OK, self)
             event.Skip(False)
             return
-        self.grid.update(self.titles, self.ws.inputCmdOutput(wsn))
+        self.grid.update(self.titles, self.ws.inputCmdOutput(self.wsn))
         self.Show()
         event.Skip(False)
 
@@ -232,6 +239,9 @@ class WiWS(wx.Frame):
             wx.MessageBox(error,"",wx.OK, self)
             event.Skip(False)
             return
+        wsn = self.hj.worksheets.wsnCurrentChange()
+        if wsn:
+            self.wsn = wsn
         self.refreshSelection()
         event.Skip(False)
 
@@ -249,13 +259,10 @@ class WiWS(wx.Frame):
             QueryParams(parent=self, title="New worksheet name",
                  style=wx.OK | wx.NO, params={"Worksheet name": "str"}, selected={}, verify=None, sample=None, descriptions={}, on_close=self.wsname_close, getOptions=self.ws.paramsCmd)
         else:
-            wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
+            self.wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
             self.addButton.Show()
-            self.grid.update(self.titles, self.ws.inputCmdOutput(wsn))
+            self.grid.update(self.titles, self.ws.inputCmdOutput(self.wsn))
             self.refreshSelection()
-            self.panel.Layout()
-            self.Layout()
-            self.Show()
         event.Skip(False)
 
     def wsname_close(self, event) -> None:
@@ -263,11 +270,11 @@ class WiWS(wx.Frame):
         if qp.res != wx.OK:
             event.Skip()
             return
-        (wsn, typ) = qp.getValue("Worksheet name", "str")
-        if not wsn:
+        (self.wsn, typ) = qp.getValue("Worksheet name", "str")
+        if not self.wsn:
             event.Skip()
             return
-        error = self.ws.addSheet(uuid.uuid4(),wsn)
+        error = self.ws.addSheet(uuid.uuid4(),self.wsn)
         if error:
             wx.MessageBox(
                 "Faild: "+error,
@@ -279,11 +286,11 @@ class WiWS(wx.Frame):
         self.ws_selection.Append(self.ws.titles())
         self.ws_selection.Append("new worksheet")
         self.addButton.Show()
-        self.grid.update(self.titles, self.ws.inputCmdOutput(wsn))
+        self.grid.update(self.titles, self.ws.inputCmdOutput(self.wsn))
         event.Skip()
 
     def ws_verify(self, qp: QueryParams) -> str:
-        wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
+        self.wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
         uuid = qp.data
         cmd = self.ws.getCmdUuid(uuid)
         if cmd:
@@ -293,7 +300,7 @@ class WiWS(wx.Frame):
         selected = qp.getSelected()
         cmdname = list(selected.keys())[0]
         cmdname=cmdname[0:cmdname.find(".")]
-        return self.ws.updateCmd(wsn=wsn, cmdUuid=uuid, cmdname=cmdname, oldselected=oldselected, selected=selected)
+        return self.ws.updateCmd(wsn=self.wsn, cmdUuid=uuid, cmdname=cmdname, oldselected=oldselected, selected=selected)
 
     def ws_sample(self, title:str) -> None:
         WiSampleGrid(title=title, remoteAddr=self.congregation, mudp=self.mudp)
@@ -304,19 +311,19 @@ class WiWS(wx.Frame):
             event.Skip(False)
             return
         # outputs = self.grid.grid.GetCellValue(row, 2)
-        wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
-        self.cmd = self.ws.sheetCmds(wsn)[row]
+        self.wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
+        self.cmd = self.ws.sheetCmds(self.wsn)[row]
         cmdname = MCmd.name(self.cmd)
         uuid = MCmd.uuid(self.cmd)
         (params, selected, descriptions) = self.ws.paramsCmd(cmd=self.cmd, at=cmdname)
-        QueryParams(parent=self, title=wsn+":"+uuid,
+        QueryParams(parent=self, title=self.wsn+":"+uuid,
              style=wx.OK | wx.CANCEL | wx.CAPTION | wx.NO, params=params,
              selected=selected, descriptions=descriptions, verify=self.ws_verify, sample=self.ws_sample, on_close=self.ws_close, data=uuid, getOptions=self.ws.paramsCmd)
         event.Skip(False)
 
     def ws_close(self, event) -> None:
         """ Close edit command window. """
-        wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
+        self.wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
         qp = event.GetEventObject()
         if qp.res == wx.OK:
             errors = self.ws_verify(qp)
@@ -329,10 +336,10 @@ class WiWS(wx.Frame):
                 return
             # cmd = self.ws.getCmdUuid(uuid=qp.data)
             # self.ws.purgeCmd(cmd)
-            self.grid.update(self.titles, self.ws.inputCmdOutput(wsn))
+            self.grid.update(self.titles, self.ws.inputCmdOutput(self.wsn))
         elif qp.res == wx.CANCEL:
-            self.ws.deleteCmdByOutputs(wsn=wsn,outputs=qp.data)
-            self.grid.update(self.titles, self.ws.inputCmdOutput(wsn))
+            self.ws.deleteCmdByOutputs(wsn=self.wsn,outputs=qp.data)
+            self.grid.update(self.titles, self.ws.inputCmdOutput(self.wsn))
         event.Skip()
 
     @staticmethod

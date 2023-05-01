@@ -720,7 +720,7 @@ class MWorksheets:
                 k = selected.get(parent, None)
                 if k is None:
                     return {}
-                if k not in cmd:
+                if not cmd or k not in cmd:
                     cmd = {k: {}}
             cmd = self.update_handlers[t](cmd, parent, schema, selected)
             return cmd
@@ -740,8 +740,6 @@ class MWorksheets:
             the change).
         """
         cmd = self.getCmdUuid(uuid=cmdUuid)
-        print(cmdUuid)
-        print(cmd)
         if cmd:
             if changelog:
                 if selected:
@@ -765,7 +763,6 @@ class MWorksheets:
                 cmd[cmdname] = self._updatecmd(
                     cmd[cmdname], parent=cmdname, schema=self.schema[cmdname],
                     selected=selected)
-                print("updatecmd a "+cmd["uuid"])
         else:
             backup = None
             cmd[cmdname] = self._updatecmd(
@@ -774,7 +771,6 @@ class MWorksheets:
             cmd["uuid"] = str(uuid.uuid4())
             cmd["cmd"] = cmdname
             self.cmdUuidToCmd[cmd["uuid"]] = cmd
-            print("updatecmd b "+cmd["uuid"])
         error = ""
         if not backup:
             self.ws[wsn]["cmds"].append(cmd)
@@ -952,6 +948,13 @@ class MWorksheets:
         self.save(self.changes.currentPath())
         return ""
 
+    def wsnCurrentChange(self) -> str:
+        """ Return the worksheet uuid if the current change created the worksheet. """
+        c = self.changes.currentChange()
+        if type(c) == MWorksheetsSheetChange:
+            return c.wsuuid
+        return None
+    
     def deleteNextChange(self) -> bool:
         """ Deletes the next change. """
         self.changes.delete()
