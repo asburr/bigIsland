@@ -157,20 +157,20 @@ class WiWS(wx.Frame):
         else:
             changes=[]
         self.ws_selectionUNDO.SetItems(changes)
-        self.ws_selectionUNDO.SetValue("UNDO change")
+        self.ws_selectionUNDO.SetValue("UNDO")
         change = self.ws.changes.nextChange()
         if change:
             changes=[str(change)]
         else:
             changes=[]
         self.ws_selectionDEL.SetItems(changes)
-        self.ws_selectionDEL.SetValue("DEL change")
+        self.ws_selectionDEL.SetValue("DEL")
         self.ws_selectionREDO.SetItems(changes)
-        self.ws_selectionREDO.SetValue("REDO change")
+        self.ws_selectionREDO.SetValue("REDO")
         wsns = self.ws.titles()
         wsns.append("new worksheet")
         self.ws_selection.SetItems(wsns)
-        self.ws_selection.SetValue("NEW change")
+        self.ws_selection.SetValue("NEW")
         if self.wsn:
             self.addButton.Show()
             self.grid.update(self.titles, self.ws.inputCmdOutput(self.wsn))
@@ -234,11 +234,19 @@ class WiWS(wx.Frame):
         event.Skip(False)
 
     def ws_selectedREDO(self, event):
+        change = self.hj.worksheets.changes.nextChange()
         error = self.hj.worksheets.redo()
-        if len(error) > 0:
+        if error:
             wx.MessageBox(error,"",wx.OK, self)
             event.Skip(False)
             return
+        error = self.hj.push(change)
+        if error:
+            wx.MessageBox(error,"",wx.OK, self)
+            error = self.hj.worksheets.undo()
+            if error:
+                wx.MessageBox(error,"",wx.OK, self)
+            event.Skip(False)
         wsn = self.hj.worksheets.wsnCurrentChange()
         if wsn:
             self.wsn = wsn

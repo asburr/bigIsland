@@ -84,7 +84,7 @@ class RootH():
                     raise Exception("Unexpected message " + str(cmd))
                 if MLogger.isDebug():
                     mlogger.debug(self.title+" recv "+str(key)+" "+str(cmd))
-                n(cmd)
+                n(key,cmd)
             if not didSomething and not self.tick():
                 sleep(0.1)
         if MLogger.isDebug():

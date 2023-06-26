@@ -27,15 +27,15 @@ import uuid
 class MWorkSheetException(Exception):
     pass
 
-
 class MWorksheetsCmdChange(MJournalChange):
-    """ A change to a command. """
-    def __init__(self, ws: str, cmduuid: str, cmdname: str, selected: dict, when:MZdatetime = None):
+    """ A change to a command. Oldselected is used by the databases, to verify that the database has the same version of the command. """
+    def __init__(self, ws: str, cmduuid: str, cmdname: str, oldselected: dict, newselected: dict, when:MZdatetime = None):
         super().__init__(when)
         self.ws = ws
         self.cmduuid = cmduuid
         self.cmdname = cmdname
-        self.selected = selected
+        self.oldselected = oldselected
+        self.newselected = newselected
 
     def fromJson(j: dict):
         return MWorksheetsCmdChange(**j)
@@ -43,22 +43,63 @@ class MWorksheetsCmdChange(MJournalChange):
     def __str__(self):
         return self.when.strftime(short=True)+" cmd : "+self.cmdname+" "+str(self.selected)
 
+    def msgParams(self) -> dict:
+        return {
+            "cmdUuid": self.cmduuid,
+            "sheetUuid": self.ws,
+            "oldcmd": self.oldselected,
+            "newcmd": self.selected,
+            "routing": True
+        }
+
+    def msgType(self) -> str:
+        return "_cmdReq_"
+
 
 class MWorksheetsCmdDelete(MWorksheetsCmdChange):
     """ Delete a command.  """
+    def __init__(self, ws: str, cmduuid: str, cmdname: str, oldselected: dict, when:MZdatetime = None):
+        super().__init__(ws, cmduuid, cmdname, oldselected, {}, when)
+
+    def msgParams(self) -> dict:
+        return {
+            "cmdUuid": self.cmduuid,
+            "sheetUuid": self.ws,
+            "oldcmd": self.oldselected,
+            "newcmd": {},
+            "routing": True
+        }
+        
+    def msgType(self) -> str:
+        return "_cmdReq_"
 
 
-class MWorksheetsCmdAdd(MWorksheetsCmdDelete):
+class MWorksheetsCmdAdd(MWorksheetsCmdChange):
     """ Add a command.  """
+    def __init__(self, ws: str, cmduuid: str, cmdname: str, newselected: dict, when:MZdatetime = None):
+        super().__init__(ws, cmduuid, cmdname, {}, newselected, when)
+
+    def msgParams(self) -> dict:
+        return {
+            "cmdUuid": self.cmduuid,
+            "sheetUuid": self.ws,
+            "oldcmd": {},
+            "newcmd": self.newselected,
+            "routing": True
+        }
+
+    def msgType(self) -> str:
+        return "_cmdReq_"
 
 
 class MWorksheetsSheetChange(MJournalChange):
     """
     A change to a worksheet.
     """
-    def __init__(self, wsuuid: str, worksheetname: str, when:MZdatetime = None):
+    def __init__(self, wsuuid: str, oldname:str, worksheetname: str, when:MZdatetime = None):
         super().__init__(when)
         self.wsuuid = wsuuid
+        self.oldname = oldname
         self.worksheetname = worksheetname
 
     def fromJson(j: dict):
@@ -66,6 +107,17 @@ class MWorksheetsSheetChange(MJournalChange):
     
     def __str__(self):
         return self.when.strftime(short=True)+" sheet : "+self.worksheetname
+
+    def msgParams(self) -> dict:
+        return {
+            "sheetUuid": self.wsuuid,
+            "oldname": self.oldname,
+            "newname": self.worksheetname,
+            "routing": True
+        }
+
+    def msgType(self) -> str:
+        return "_sheetReq_"
 
 
 class MWorksheetsRebaseChange(MJournalChange):
@@ -77,6 +129,9 @@ class MWorksheetsRebaseChange(MJournalChange):
     
     def __str__(self):
         return self.when.strftime(short=True)+" newbase "
+
+    def msgType(self) -> str:
+        return None
 
 
 class MWorksheetsChangeFactory(MJournalChangeFactory):
@@ -398,15 +453,19 @@ class MWorksheets:
     def sheetCmds(self, title: str) -> dict:
         return self.ws[title]["cmds"]
 
-    def updateSheet(self, uuid:str, title: str, changelog: bool=True):
-        """ Add a worksheet """
+    def updateSheet(self, uuid:str, oldtitle:str, title: str, changelog: bool=True) -> str:
+        """ Create a worksheet, or change the title for an existing worksheet. """
         if uuid in self.ws:
+            if oldtitle != self.ws[uuid]["name"]:
+                return "wrong version"
             self.ws[uuid]["name"] = title
-            return
-        self.ws[uuid] = {"name":title, "uuid": uuid, "cmds":[]}
-        self.wsl.append(self.ws[uuid])
+        else:
+            if oldtitle is not None:
+                return "No old version to update...should the sheet be added anyway?"
+            self.ws[uuid] = {"name":title, "uuid": uuid, "cmds":[]}
+            self.wsl.append(self.ws[uuid])
         if changelog:
-            self.save(self.changes.add(MWorksheetsSheetChange(uuid,title)))
+            self.save(self.changes.add(MWorksheetsSheetChange(uuid,oldtitle,title)))
         return ""
 
     def inputCmdOutput(self, title: str) -> list:
@@ -743,7 +802,7 @@ class MWorksheets:
         if cmd:
             if changelog:
                 if selected:
-                    self.save(self.changes.add(MWorksheetsCmdChange(wsn,cmdUuid,cmdname,selected)))
+                    self.save(self.changes.add(MWorksheetsCmdChange(wsn,cmdUuid,cmdname,oldselected,selected)))
         else:
             cmd = {}
             if changelog:
@@ -806,7 +865,7 @@ class MWorksheets:
             else:
                 del self.ws[wsn]["cmds"][-1]
         elif changelog:
-            self.save(self.changes.add(MWorksheetsCmdChange(wsn,cmd["uuid"],cmdname,selected)))
+            self.save(self.changes.add(MWorksheetsCmdChange(wsn,cmd["uuid"],cmdname,oldselected,selected)))
         return error
 
     def save(self, dir:str):
@@ -844,12 +903,12 @@ class MWorksheets:
             if not sws: # New worksheet.
                 #print(f"NEW WORKSHEET {ows}")
                 changes += 1
-                self.changes.add(MWorksheetsSheetChange(ows["uuid"],ows["name"]))
+                self.changes.add(MWorksheetsSheetChange(ows["uuid"],None,ows["name"]))
             else:
                 if sws["name"] != ows["name"]: # Sheet has a new name.
                     #print(f'NEW WORKSHEET NAME {sws["uuid"]} {sws["name"]} {ows["name"]}')
                     changes += 1
-                    self.changes.add(MWorksheetsSheetChange(sws["uuid"],ows["name"]))
+                    self.changes.add(MWorksheetsSheetChange(sws["uuid"],sws["name"],ows["name"]))
             for ocmd in ows["cmds"]: # Thru other's cmds
                 (params, oselected, description) = other.paramsCmd(ocmd,at=None)
                 scmd = self.getCmdUuid(ocmd["uuid"])
@@ -859,7 +918,7 @@ class MWorksheets:
                         continue
                     #print(f"NEW UPDATED CMD {ocmd} {scmd}")
                     #print(f"{oselected} {sselected}")
-                    self.changes.add(MWorksheetsCmdChange(ows["uuid"],ocmd["uuid"],ocmd["cmd"],oselected))
+                    self.changes.add(MWorksheetsCmdChange(ows["uuid"],ocmd["uuid"],ocmd["cmd"],sselected,oselected))
                 else:
                     #print(f"NEW CMD {ocmd}")
                     self.changes.add(MWorksheetsCmdAdd(ows["uuid"],ocmd["uuid"],ocmd["cmd"],oselected))
@@ -941,7 +1000,7 @@ class MWorksheets:
             if error:
                 return error
         elif type(wsc) == MWorksheetsSheetChange:
-            self.updateSheet(wsc.wsuuid, wsc.worksheetname,changelog=False)
+            self.updateSheet(wsc.wsuuid, wsc.oldname, wsc.worksheetname,changelog=False)
         elif type(wsc) == MWorksheetsRebaseChange:
             return "Cannot redo a rebase which is the base for subsequent changes"
         self.changes.up()

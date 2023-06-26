@@ -23,6 +23,7 @@ from multiprocessing import Process
 import argparse
 from magpie.src.mlogger import MLogger, mlogger
 from magpie.src.mworksheets import MWorksheets
+from magpie.src.mudp import MUDPKey
 
 
 class Cluster():
@@ -37,9 +38,12 @@ class Cluster():
                 self.connect = connectaddr
                 self.save()
         else:
-            self.left = None
+            # TODO; fix up congregations and worksheets from ConReq.
+            self.leftCongregationAddress = None
+            self.leftWorksheets = None
             self.leftConnectAttempts = 0
-            self.right = None
+            self.rightCongregationAddress = None
+            self.rightWorksheets = None
             self.rightConnectAttempts = 0
             self.commandAttempts = 0
             self.leftCommandAttempts = 0
@@ -57,7 +61,7 @@ class Cluster():
         with open(self.path, "w") as f:
             json.dump(self.__dict__,f)
 
-    def newCmdHere(self):
+    def newCmdHere(self) -> bool:
         """
         Return True when new command should be added at this Congregation
         """
@@ -126,54 +130,99 @@ class Congregation(RootHJ):
         self.cluster = Cluster(self.processdir,connectaddr)
         p = os.path.join(processdir,".worksheets")
         self.ws = MWorksheets(p)
-        print(self.ws)
 
-    def ConReq(self, cmd: dict):
-        """
-        We are a connected Congregation receiving conReq from a new
-        Congregation that wants to join the database.
-        """
+    def _redirecting(self, key: MUDPKey, cmd: dict) -> (bool, dict):
+        """ Returns bool, True when this node is first, or False when this node has already been walked. Also returns the param to route a msg to the next node in the walk, or params is None when the walk ends. Redirecting is one of two states: accending to the summit congregation when routing is True; or, walking from the summit and through all congregations in the tree when routing is False. Walking starts at the summit and either goes left if there is a left, or goes right if there is a right, or the walk ends. Walking from the parent continues by going left if there is a left, or going right if there is a right, or going back up to the parent. Walking from the left continues by going right if there is a right, or going back up to the parent. Walking ends at the summit. A node may be walked three times: when walking down the tree on the left hand-side or on the right hand-side; and again when walking up from the left hand-side; and again when walking up from the right hand-side. For this reason, the processing of a node should be the first time which is frmo the parent, or the summit node is processed when the walk starts. """
         p = cmd["params"]
-        # Initially, the request is redirected to the parent.
-        if p["routing"] == True and self.cluster.parent():
-            self.sendCfm(req=cmd,title="_ConCfm_", params={
-                "routing": True,
-                "resend": self.cluster.parent()
-            })
+        first  = None # (True) first time this walk has seen this congregation, (false) otherwise.
+        params = {} # params to message the next congregation in the walk of the tree of congregations.
+        # params["routing"] (True) when routing to the summit, (False) when walking the congregations.
+        if p["routing"]:
+            # heading upwards, towards the summit Congregation.
+            if self.cluster.parent():
+                # Continue towards the summit Congregation.
+                first  = False
+                params["routing"] = True
+                params["Congregation"] = self.cluster.parent()
+            else:
+                # This is the summit, start walking.
+                first  = True
+                params["routing"] = False
+                if self.cluster.left:
+                    params["Congregation"] = self.cluster.left
+                elif self.cluster.right:
+                    params["Congregation"] = self.cluster.right
+                else:
+                    params = None
+        else:
+            # walking the tree.
+            params["routing"] = False
+            if key.getAddr() == self.cluster.left:
+                # Just walked up from the left node.
+                first  = False
+                if self.cluster.right:
+                    params["Congregation"] = self.cluster.right
+                elif self.cluster.parent:
+                    params["Congregation"] = self.cluster.parent()
+                else:
+                    params = None
+            elif key.getAddr() == self.cluster.right:
+                # Just walked up from the right node.
+                first  = False
+                if self.cluster.parent():
+                    params["Congregation"] = self.cluster.parent()
+                else:
+                    params = None
+            elif key.getAddr() == self.cluster.parent():
+                # Just walked down from parent node.
+                first  = True
+                if self.cluster.left:
+                    params["Congregation"] = self.cluster.left
+                elif self.cluster.right:
+                    params["Congregation"] = self.cluster.right
+                else:
+                    params["Congregation"] = self.cluster.parent()
+            else:
+                raise Exception("Walking tree but key "+str(key)+" not parent "+str(self.cluster.parent())+" not left "+str(self.cluster.left)+" and not right "+str(self.cluster.right))
+        return (first,params)
+
+    def ConReq(self, key: MUDPKey, cmd: dict):
+        """
+        Request is redirected to where the new congregation can join the database in a cluster of up to three
+        congregations.
+        """
+        (first, params) = self._redirecting(key, cmd)
+        if not first:
+            self.sendCfm(req=cmd,title="_ConCfm_", params=params)
             return
-        # Otherwise, the request is redirected down to where the new
-        # congregation can join the database.
-        # Connect new Congregation here, on the empty left.
         if not self.cluster.left:
             self.cluster.left = cmd["__remote_address__"]
             self.cluster.save()
             self.sendCfm(req=cmd,title="_ConCfm_", params={
-                "cluster": [self.localAddress],
-                "schema": self.ws.schema
+                "cluster": [{"Congregation": self.localAddress, "worksheet": self.ws}]
             })
             return
-        # Connect new Congregation here, on the empty right.
-        if not self.childRight:
-            self.childRight = cmd["__remote_address__"]
+        if not self.cluster.right:
+            self.cluster.right = cmd["__remote_address__"]
+            self.cluster.save()
             self.sendCfm(req=cmd,title="_ConCfm_", params={
-                "cluster": [self.localAddress, self.childLeft],
-                "schema": self.ws.schema
+                "cluster": [self.localAddress, self.childLeft]
             })
             return
         # Route new Congregation to smallest branch on the left.
-        if self.leftConnectAttempts < self.rightConnectAttempts:
+        if self.cluster.leftConnectAttempts < self.cluster.rightConnectAttempts:
             self.leftConnectAttempts += 1
             self.sendCfm(req=cmd,title="_ConCfm_", params={
-                "resend": self.childLeft
+                "resend": self.cluster.left
             })
         # Route new Congregation to smallest branch on the right.
         else:
-            self.rightConnectAttempts += 1
+            self.cluster.rightConnectAttempts += 1
             self.sendCfm(req=cmd,title="_ConCfm_", params={
-                "resend": self.childRight
+                "resend": self.cluster.right
             })
 
-    def ConCfm(self, cmd: dict):
+    def ConCfm(self, key: MUDPKey, cmd: dict):
         """ We are a new Congregation receiving the concfm. """
         self.conreqTimer.stop(k=1)
         p = cmd["params"]
@@ -190,7 +239,6 @@ class Congregation(RootHJ):
         # Connection has been made.
         self.cluster.parents = p["cluster"]
         self.save()
-        self.ws.changeSchema(p["schema"])
 
     def _walkDatabase(self, cmd: dict, params: dict, cfmTitle: str, getParams):
         """
@@ -244,7 +292,7 @@ class Congregation(RootHJ):
         p = cmd["params"]
         yield ("cmd", self.ws.nextCmdUuid(p["cmdUuid"]))
 
-    def cmdInd(self, cmd: dict):
+    def cmdInd(self, key: MUDPKey, cmd: dict):
         """
         Find commands. Walk database using the routing strategy
         which left hand side, then right hand side. then up to parent.
@@ -258,17 +306,14 @@ class Congregation(RootHJ):
         p = cmd["params"]
         self.ws.changeSchema(p["schema"])
 
-    def schReq(self, cmd: dict):
+    def schReq(self, key: MUDPKey, cmd: dict):
         """ Update schema in each Congregation.
         """
         params={}
         self._walkDatabase(cmd,params,"_schCfm_",self.schIndParams)
 
-    def sheetReq(self, cmd: dict):
-        """ Update sheet """
-        
-    def cmdReq(self, cmd: dict):
-        """ update/create cmd """
+    def redirecting(self, key: MUDPKey, cmd: dict) -> bool:
+        """ """
         p = cmd["params"]
         params={}
         # heading upwards, towards the summit Congregation.
@@ -277,9 +322,33 @@ class Congregation(RootHJ):
                 params["routing"] = True
                 params["Congregation"] = self.cluster.parent()
                 self.sendCfm(req=cmd,title="_cmdCfm_", params=params)
-                return
+                return True
             else:
                 p["routing"] == False
+        # Walking the tree.
+        elif p["routing"] == False:
+            if self.cluster.right:
+                params["routing"] = None
+                params["Congregation"] = self.cluster.right
+                self.sendCfm(req=cmd,title="_cmdCfm_", params=params)
+            else:
+                params["routing"] = None
+                params["Congregation"] = self.cluster.parent()
+                self.sendCfm(req=cmd,title="_cmdCfm_", params=params)
+        return False
+
+    def sheetReq(self, cmd: dict):
+        """ Update sheet """
+        if self.redirecting(cmd):
+            return
+        
+        
+    def cmdReq(self, key: MUDPKey, cmd: dict):
+        """ update/create cmd """
+        # heading upwards, towards the summit Congregation.
+        p = cmd["params"]
+        if self.redirecting(cmd):
+            return
         # heading downwards, towards the command.
         if p["routing"] == False:
             uuid = p["cmdUuid"]
@@ -328,16 +397,6 @@ class Congregation(RootHJ):
                 return
             else:
                 p["routing"] = None
-        # Heading upwards towards the next righthand side congregation.
-        if p["routing"] == None:
-            if self.cluster.right:
-                params["routing"] = None
-                params["Congregation"] = self.cluster.right
-                self.sendCfm(req=cmd,title="_cmdCfm_", params=params)
-            else:
-                params["routing"] = None
-                params["Congregation"] = self.cluster.parent()
-                self.sendCfm(req=cmd,title="_cmdCfm_", params=params)
         
     def start(self, cmd: dict):
         """ Get list of running processes. """
@@ -381,7 +440,7 @@ class Congregation(RootHJ):
     def Stop(self, cmd: dict) -> None:
         raise Exception("Stopping")
 
-    def JahReq(self, cmd: dict) -> None:
+    def JahReq(self, key: MUDPKey, cmd: dict) -> None:
         p = cmd["params"]
         self.ProcessReq("_JahCfm_", "j_", cmd, Jah, Jah.args(os.getcwd(), p["cmdUuid"], self.port, self.halleludir))
 

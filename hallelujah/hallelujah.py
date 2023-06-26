@@ -10,7 +10,8 @@
 # 
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
 # 
-from magpie.src.mworksheets import MWorksheets
+from magpie.src.mworksheets import MWorksheets, MJournalChange
+from magpie.src.mudp import MUDPKey
 from hallelujah.root import RootH
 import os
 from magpie.src.mlogger import MLogger, mlogger
@@ -42,8 +43,7 @@ class Hallelujah(RootH,threading.Thread):
                 "_cmdRsp_": self.__cmdRsp,
                 "_cmdCfm_": self.__cmdCfm
             })
-            self.cmdindTimer = mTimer(3)
-            self.cmdreqTimer = mTimer(3)
+            self.cmdTimer = mTimer(3)
             self.filters={}
             p=os.path.join(worksheetdir,".dbversion")
             shutil.rmtree(p,ignore_errors=True)
@@ -67,6 +67,7 @@ class Hallelujah(RootH,threading.Thread):
             return self.dbworksheets_state
         self.dbworksheets_state = "pulling"
         v={
+            "msgtype": "_cmdInd_",
             "params": {
                 "filters": self.filters,
                 "cmdUuid": None,
@@ -74,10 +75,10 @@ class Hallelujah(RootH,threading.Thread):
             },
             "addr":self.congregation_addr
         }
-        self.cmdindTimer.start(k=1,v=v)
+        self.cmdTimer.start(k=1,v=v)
         self.dbworksheets.empty()
         self.sendReq(
-            title="_cmdInd_",
+            title=v["msgtype"],
             params=v["params"],
             remoteAddr=v["addr"]
         )
@@ -87,7 +88,7 @@ class Hallelujah(RootH,threading.Thread):
         self.dbworksheets_state = None
         return error
 
-    def __cmdRsp(self, cmd: dict) -> None:
+    def __cmdRsp(self, key: MUDPKey, cmd: dict) -> None:
         """ Build worksheet from cmds in cmdRsp. Resend the first cmdind
             towards the summit congregation. Or, resend to the next congregation.
             Otherwise, no more cmds and then the worksheet is complete.
@@ -98,8 +99,8 @@ class Hallelujah(RootH,threading.Thread):
             (params, selected, description) = self.dbworksheets.paramsCmd(cmd=c,at=None)
             self.dbworksheets.updateCmd(c["uuid"], None, selected, changelog=False)
         # Get params from timer before stopping it.
-        v = self.cmdreqTimer.get(1)
-        self.cmdindTimer.stop(1)
+        v = self.cmdTimer.get(1)
+        self.cmdTimer.stop(1)
         # No more redirections means this is the last response.
         if "Congregation" not in cmd:
             self.dbworksheets.save(self.dbworksheets.dir)
@@ -108,65 +109,53 @@ class Hallelujah(RootH,threading.Thread):
         # More redirections, copy the routing indicator and address from the response.
         v["params"]["routing"] = p["routing"]
         v["addr"] = p["Congregation"]
-        self.cmdindTimer.start(k=1,v=v)
+        self.cmdTimer.start(k=1,v=v)
         self.sendReq(
-            title="_cmdInd_",
+            title=v["msgtype"],
             params=v["params"],
             remoteAddr=v["addr"]
         )
 
-    def push(self) -> str:
+    def push(self, change:MJournalChange) -> str:
         """
-        Push each local change into the database, upto and including the
-        current change. Or, stops before the change that failed.
-        After each a successfull push, the change is accepted and cannot
-        be undone.
+        Returns None when successfully pushed the change into the database. Return a string describing the error when failed to push the change into the database.
         """
         if self.dbworksheets_state:
-            return self.dbworksheets_state
+            raise Exception("Two calls to push() at the same time is not supported")
         while True:
-            change = self.worksheets.getCurrentChange()
-            if not change:
-                break
-            (wsuuid, cmd) = change
             v = {
-                "params": {
-                    "cmdUuid": cmd["uuid"],
-                    "version": cmd["version"],
-                    "newVersion": str(int(cmd["version"])+1),
-                    "sheetUuid": wsuuid,
-                    "cmd": {cmd["name"]: cmd[cmd["name"]]},
-                    "routing": True
-                },
-                "addr":cmd["Congregation"]
+                "msgtype": change.msgType(),
+                "params": change.msgParams(),
+                "addr":self.congregation_addr
             }
             self.dbworksheets_state = "pushing"
-            self.cmdreqTimer.start(k=1,v=v)
+            self.cmdTimer.start(k=1,v=v)
             self.sendReq(
-                title="_cmdReq_",
+                title=v["msgtype"],
                 params=v["params"],
                 remoteAddr=v["addr"]
             )
             while self.dbworksheets_state == "pushing":
                 time.sleep(1)
             if self.dbworksheets_state == "failed":
-                self.dbworksheets_state == None
+                self.dbworksheets_state = None
                 return self.error
-            self.worksheets.push()
-        return None
+            self.dbworksheets_state = None
+            return None
 
-    def __cmdCfm(self, cmd: dict) -> None:
+    def __cmdCfm(self, key: MUDPKey, cmd: dict) -> None:
         """
         Redirect cmdreq when cmdreq was successfull, or get the failure code.
         """
-        v = self.cmdreqTimer.get(1)
-        self.cmdreqTimer.stop(1)
+        v = self.cmdTimer.get(1)
+        self.cmdTimer.stop(1)
         p = cmd["params"]
         if "Congregation" in p: # Redirect request.
             v["params"]["routing"] = p["routing"]
-            self.cmdreqTimer.start(k=1,v=v)
+            print(v)
+            self.cmdTimer.start(k=1,v=v)
             self.sendReq(
-                title="_cmdReq_",
+                title=v["msgtype"],
                 params=v["params"],
                 remoteAddr=p["Congregation"]
             )
@@ -180,23 +169,14 @@ class Hallelujah(RootH,threading.Thread):
     def tick(self) -> bool:
         """ Handle timeout with retransmit to the local congregation. """
         didSomething = super().tick()
-        for k, v in self.cmdindTimer.expired():
+        for k, v in self.cmdTimer.expired():
             didSomething = True
             v["first"] = True
             v["addr"] = self.congregation_addr
-            self.cmdindTimer.start(k=k,v=v)
+            self.cmdTimer.start(k=k,v=v)
+            print(v)
             self.sendReq(
-                title="_cmdInd_",
-                params=v["params"],
-                remoteAddr=v["addr"]
-            )
-        for k, v in self.cmdreqTimer.expired():
-            didSomething = True
-            v["first"] = True
-            v["addr"] = self.congregation_addr
-            self.cmdindTimer.start(k=k,v=v)
-            self.sendReq(
-                title="_cmdReq_",
+                title=v["msgtype"],
                 params=v["params"],
                 remoteAddr=v["addr"]
             )

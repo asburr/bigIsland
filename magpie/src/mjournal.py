@@ -43,9 +43,13 @@ class MJournalChange:
 
     def fromJson(j: dict, factoryClass) -> "MJournalChange":
         return factoryClass.make(j)
-    
+
     def __str__(self) -> str:
         return self.__class__.__name__+" "+self.when.strftime(short=True)
+
+    def msgParams(self) -> dict:
+        """ Database message parameters for this change. """
+        return {}
 
 
 class MJournalChangeTest(MJournalChange):
