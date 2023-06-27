@@ -278,12 +278,12 @@ class MZdatetime:
                 if got != result:
                     raise Exception("Failed " + string + " " + got + " != " + result)
                 try:
-                    dt = MZdatetime.fromdatetime(dateutil.parser.parse(string))
-                    got = dt.strftime()
+                    gdt = MZdatetime.fromdatetime(dateutil.parser.parse(string))
+                    got = gdt.strftime()
                     if got != result:
-                        print("INFO : dateutil failed " + string + " " + got + " != " + result)
-                except Exception:
-                    print("INFO : dateutil failed " + string)
+                        print("INFO : example of when dateutil parser fails with string \"" + string + "\"\n  got=" + got + "\n  exp=" + result)
+                except Exception as e:
+                    print("INFO : example (2) of when dateutil parser fails with string \"" + string+ "\"\n  exception=" + str(e))
             except Exception:
                 print("Failed " + string)
                 raise
