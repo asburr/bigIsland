@@ -296,20 +296,16 @@
         }
     }, "routing.macro": {
         "type": "bool",
-        "desc": "Routing indicator for Request and Indication messages as they traverse the Congregations: (true) heading upwards, towards the summit Congregation; (false) heading downwards, towards the next Congregation on the left; and, (null) heading upwards, towards the next Congregation on the right."
+        "desc": "Routing indicator for Request and Indication messages as they traverse the Congregations: (true) heading upwards, towards the summit Congregation; (false) heading downwards and if from left hand-side go to right hand-side, if from right hand-side go to parent, otherwise if not from right and left hand-side go to left hand-side."
     }, "_ConReq_": {
         "type": "composite",
-        "desc": "Congregation requests connection to another Congregation",
+        "desc": "Congregation requests connection into the database",
         "routing": {
             "type": "routing.macro"
-        },
-        "cluster": {
-            "type": "bool", "default": null,
-            "desc": "True when this ConReq is going toward the second Congregation in the cluster"
         }
     }, "_ConCfm_": {
         "type": "composite",
-        "desc": "Confirmation for ConReq.",
+        "desc": "Confirmation for ConReq. May be rerouted towards a partial cluster of congregations that this congregation will join. Returns the address(es) of the other congregations that comprise the cluster of up to three congregation that this congregation just joined. Also, returns the worksheets for each of the other congregations. These worksheets document the commands and sheets that are supported by the congregation. The worksheets are duplicated across the cluster, so each congregation has a copy of what the others support.",
         "routing": {
             "type": "routing.macro"
         },
@@ -318,16 +314,16 @@
             "desc": "Resend is present when the final destination is not reached, and ConReq needs to be resent to this address to continue on its journey."
         },
         "cluster": {
-            "type": "list", "default": null,
+            "type": "listComposites", "default": null,
             "desc": "Congregation has been added to this cluster",
             "Congregation": {
                 "type": "address.macro",
-                "desc": "Addresses of a Congregations in the cluster"
+                "desc": "Addresses of another Congregation in the cluster"
+            },
+            "worksheet": {
+                "type": "any", "default": null,
+                "desc": "Worksheet detailing the commands supported by this congregation."
             }
-        },
-        "schema": {
-            "type": "any", "default": null,
-            "desc": "Schema for the congregation."
         }
     }, "_CongregationSizeReq_": {
         "type": "composite",
