@@ -14,7 +14,7 @@ from time import time, sleep
 # into dicts. Prior versions, do not retain ordering of insert.
 # insert order is relied upon when expiring old timer.
 import platform
-if platform.python_version_tuple() < ('3', '6', '9'):
+if [int(s) for s in platform.python_version_tuple()] < [3, 6, 9]:
     raise Exception("Wrong version of python, requires 3.6.9 or more recent")
 
 

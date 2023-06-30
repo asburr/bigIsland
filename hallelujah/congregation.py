@@ -2,12 +2,12 @@
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # This file is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# 
+#
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
 #
 import json
@@ -27,13 +27,13 @@ from magpie.src.mudp import MUDPKey
 
 
 class Cluster():
-    def __init__(self, path:str, connectaddr: (str,int)):
+    def __init__(self, path: str, connectaddr: (str, int)):
         if not os.path.exists(path):
             os.mkdir(path)
-        self.path = os.path.join(path,'cluster.json')
+        self.path = os.path.join(path, 'cluster.json')
         if os.path.exists(self.path):
             with open(self.path, "r") as f:
-                  self.__dict__.update(**json.load(f))
+                self.__dict__.update(**json.load(f))
             if self.connect != connectaddr:
                 self.connect = connectaddr
                 self.save()
@@ -59,7 +59,7 @@ class Cluster():
 
     def save(self):
         with open(self.path, "w") as f:
-            json.dump(self.__dict__,f)
+            json.dump(self.__dict__, f)
 
     def newCmdHere(self) -> bool:
         """
@@ -75,10 +75,11 @@ class Cluster():
             self.rightCommandAttempts += 1
         return False
 
-#from inspect import currentframe
-#def Error(stack: list, error:str) -> str:
+# from inspect import currentframe
+# def Error(stack: list, error:str) -> str:
 #    cf = currentframe()
 #    return "Error"+str(cf.f_back.f_lineno)+" at "+".".join(stack)+" "+error
+
 
 class Congregation(RootHJ):
     """
@@ -107,8 +108,10 @@ class Congregation(RootHJ):
  were running on the failed host, remain dormant until a Hallelujah restarts
  them.
     """
-    def __init__(self, port: int, processdir: str, connectaddr: (str,int)):
-        super().__init__(cwd=os.getcwd(), title="congregation", congregationPort=port, port=port)
+
+    def __init__(self, port: int, processdir: str, connectaddr: (str, int)):
+        super().__init__(cwd=os.getcwd(), title="congregation",
+                         congregationPort=port, port=port)
         self.hosts = set()
         self.jah_count = 0
         self.usage = MUsage()
@@ -127,26 +130,44 @@ class Congregation(RootHJ):
         self.processTimers = mTimer(5)
         self.pingTimers = mTimer(10)
         self.processdir = processdir
-        self.cluster = Cluster(self.processdir,connectaddr)
-        p = os.path.join(processdir,".worksheets")
+        self.cluster = Cluster(self.processdir, connectaddr)
+        p = os.path.join(processdir, ".worksheets")
         self.ws = MWorksheets(p)
 
     def _redirecting(self, key: MUDPKey, cmd: dict) -> (bool, dict):
-        """ Returns bool, True when this node is first, or False when this node has already been walked. Also returns the param to route a msg to the next node in the walk, or params is None when the walk ends. Redirecting is one of two states: accending to the summit congregation when routing is True; or, walking from the summit and through all congregations in the tree when routing is False. Walking starts at the summit and either goes left if there is a left, or goes right if there is a right, or the walk ends. Walking from the parent continues by going left if there is a left, or going right if there is a right, or going back up to the parent. Walking from the left continues by going right if there is a right, or going back up to the parent. Walking ends at the summit. A node may be walked three times: when walking down the tree on the left hand-side or on the right hand-side; and again when walking up from the left hand-side; and again when walking up from the right hand-side. For this reason, the processing of a node should be the first time which is frmo the parent, or the summit node is processed when the walk starts. """
+        """ Returns bool, True when this node is first, or False when this
+ node has already been walked. Also returns the param to route a msg to the
+ next node in the walk, or params is None when the walk ends. Redirecting is
+ one of two states: accending to the summit congregation when routing is True;
+ or, walking from the summit and through all congregations in the tree when
+ routing is False. Walking starts at the summit and either goes left if there
+ is a left, or goes right if there is a right, or the walk ends. Walking from
+ the parent continues by going left if there is a left, or going right if there
+ is a right, or going back up to the parent. Walking from the left continues by
+ going right if there is a right, or going back up to the parent. Walking ends
+ at the summit. A node may be walked three times: when walking down the tree on
+ the left hand-side or on the right hand-side; and again when walking up from
+ the left hand-side; and again when walking up from the right hand-side. For
+ this reason, the processing of a node should be the first time which is from
+ the parent, or the summit node is processed when the walk starts. """
         p = cmd["params"]
-        first  = None # (True) first time this walk has seen this congregation, (false) otherwise.
-        params = {} # params to message the next congregation in the walk of the tree of congregations.
-        # params["routing"] (True) when routing to the summit, (False) when walking the congregations.
+        # (True) first time this walk has seen this congregation.
+        first = None
+        # params to message the next congregation in the walk of the tree of
+        # congregations.
+        params = {}
+        # params["routing"] (True) when routing to the summit, (False) when
+        # walking the congregations.
         if p["routing"]:
             # heading upwards, towards the summit Congregation.
             if self.cluster.parent():
                 # Continue towards the summit Congregation.
-                first  = False
+                first = False
                 params["routing"] = True
                 params["Congregation"] = self.cluster.parent()
             else:
                 # This is the summit, start walking.
-                first  = True
+                first = True
                 params["routing"] = False
                 if self.cluster.left:
                     params["Congregation"] = self.cluster.left
@@ -159,7 +180,7 @@ class Congregation(RootHJ):
             params["routing"] = False
             if key.getAddr() == self.cluster.left:
                 # Just walked up from the left node.
-                first  = False
+                first = False
                 if self.cluster.right:
                     params["Congregation"] = self.cluster.right
                 elif self.cluster.parent:
@@ -168,14 +189,14 @@ class Congregation(RootHJ):
                     params = None
             elif key.getAddr() == self.cluster.right:
                 # Just walked up from the right node.
-                first  = False
+                first = False
                 if self.cluster.parent():
                     params["Congregation"] = self.cluster.parent()
                 else:
                     params = None
             elif key.getAddr() == self.cluster.parent():
                 # Just walked down from parent node.
-                first  = True
+                first = True
                 if self.cluster.left:
                     params["Congregation"] = self.cluster.left
                 elif self.cluster.right:
@@ -183,42 +204,48 @@ class Congregation(RootHJ):
                 else:
                     params["Congregation"] = self.cluster.parent()
             else:
-                raise Exception("Walking tree but key "+str(key)+" not parent "+str(self.cluster.parent())+" not left "+str(self.cluster.left)+" and not right "+str(self.cluster.right))
-        return (first,params)
+                raise Exception(f"""Walking tree but key {key} not parent
+ {self.cluster.parent()} not left {self.cluster.left} and not right
+ {self.cluster.right}""")
+        return (first, params)
 
     def ConReq(self, key: MUDPKey, cmd: dict):
         """
-        Request is redirected to where the new congregation can join the database in a cluster of up to three
+        Request is redirected to where the new congregation can join the
+        database in a cluster of up to three
         congregations.
         """
         (first, params) = self._redirecting(key, cmd)
         if not first:
-            self.sendCfm(req=cmd,title="_ConCfm_", params=params)
+            self.sendCfm(req=cmd, title="_ConCfm_", params=params)
             return
         if not self.cluster.left:
             self.cluster.left = cmd["__remote_address__"]
             self.cluster.save()
-            self.sendCfm(req=cmd,title="_ConCfm_", params={
-                "cluster": [{"Congregation": self.localAddress, "worksheet": self.ws}]
+            self.sendCfm(req=cmd, title="_ConCfm_", params={
+                "cluster": [{"Congregation": self.localAddress,
+                             "worksheet": self.ws}]
             })
             return
         if not self.cluster.right:
             self.cluster.right = cmd["__remote_address__"]
             self.cluster.save()
-            self.sendCfm(req=cmd,title="_ConCfm_", params={
+            self.sendCfm(req=cmd, title="_ConCfm_", params={
                 "cluster": [self.localAddress, self.childLeft]
             })
             return
         # Route new Congregation to smallest branch on the left.
-        if self.cluster.leftConnectAttempts < self.cluster.rightConnectAttempts:
+        if (
+                self.cluster.leftConnectAttempts <
+                self.cluster.rightConnectAttempts):
             self.leftConnectAttempts += 1
-            self.sendCfm(req=cmd,title="_ConCfm_", params={
+            self.sendCfm(req=cmd, title="_ConCfm_", params={
                 "resend": self.cluster.left
             })
         # Route new Congregation to smallest branch on the right.
         else:
             self.cluster.rightConnectAttempts += 1
-            self.sendCfm(req=cmd,title="_ConCfm_", params={
+            self.sendCfm(req=cmd, title="_ConCfm_", params={
                 "resend": self.cluster.right
             })
 
@@ -227,9 +254,9 @@ class Congregation(RootHJ):
         self.conreqTimer.stop(k=1)
         p = cmd["params"]
         # Redirect request towards where the connection will be made.
-        if p["routing"] == True:
-            params={"routing": p["routing"]}
-            self.conreqTimer.start(k=1,v={})
+        if p["routing"] is True:
+            params = {"routing": p["routing"]}
+            self.conreqTimer.start(k=1, v={})
             self.sendReq(
                 title="_ConReq_",
                 params=params,
@@ -248,43 +275,43 @@ class Congregation(RootHJ):
         """
         # heading upwards, towards the summit Congregation.
         p = cmd["params"]
-        if p["routing"] == True:
+        if p["routing"] is True:
             if self.cluster.parent():
                 params["routing"] = True
                 params["Congregation"] = self.cluster.parent()
-                self.sendCfm(req=cmd,title=cfmTitle, params=params)
+                self.sendCfm(req=cmd, title=cfmTitle, params=params)
                 return
             p["routing"] = False
         # heading downwards, towards the next Congregation on the left
-        if p["routing"] == False:
-            for k,v in getParams(self,cmd):
+        if p["routing"] is False:
+            for k, v in getParams(self, cmd):
                 params[k] = v
             cmduuid = self.ws.nextCmdUuid(p["cmdUuid"])
             if cmduuid:
                 params["routing"] = False
                 params["Congregation"] = self.localAddress
-                self.sendCfm(req=cmd,title="_cmdRsp_", params=params)
+                self.sendCfm(req=cmd, title="_cmdRsp_", params=params)
                 return
             if self.cluster.left:
                 params["routing"] = False
                 params["Congregation"] = self.cluster.left
-                self.sendCfm(req=cmd,title=cfmTitle, params=params)
+                self.sendCfm(req=cmd, title=cfmTitle, params=params)
                 return
             p["routing"] = None
         # heading upwards, towards the next Congregation on the right
-        if p["routing"] == None:
+        if p["routing"] is None:
             if self.cluster.right:
                 params["routing"] = False
                 params["Congregation"] = self.cluster.right
-                self.sendCfm(req=cmd,title=cfmTitle, params=params)
+                self.sendCfm(req=cmd, title=cfmTitle, params=params)
                 return
             else:
                 params["routing"] = None
                 if self.cluster.parent():
                     params["Congregation"] = self.cluster.parent()
-                    self.sendCfm(req=cmd,title=cfmTitle, params=params)
+                    self.sendCfm(req=cmd, title=cfmTitle, params=params)
                 else:
-                    self.sendCfm(req=cmd,title=cfmTitle, params=params)
+                    self.sendCfm(req=cmd, title=cfmTitle, params=params)
                 return
 
     @staticmethod
@@ -298,8 +325,8 @@ class Congregation(RootHJ):
         which left hand side, then right hand side. then up to parent.
         """
         p = cmd["params"]
-        params={"filters": p["filters"]}
-        self._walkDatabase(cmd,params,"_cmdRsp_",self.cmdIndParams)
+        params = {"filters": p["filters"]}
+        self._walkDatabase(cmd, params, "_cmdRsp_", self.cmdIndParams)
 
     @staticmethod
     def schIndParams(self, cmd: dict):
@@ -309,40 +336,39 @@ class Congregation(RootHJ):
     def schReq(self, key: MUDPKey, cmd: dict):
         """ Update schema in each Congregation.
         """
-        params={}
-        self._walkDatabase(cmd,params,"_schCfm_",self.schIndParams)
+        params = {}
+        self._walkDatabase(cmd, params, "_schCfm_", self.schIndParams)
 
     def redirecting(self, key: MUDPKey, cmd: dict) -> bool:
         """ """
         p = cmd["params"]
-        params={}
+        params = {}
         # heading upwards, towards the summit Congregation.
-        if p["routing"] == True:
+        if p["routing"] is True:
             if self.cluster.parent():
                 params["routing"] = True
                 params["Congregation"] = self.cluster.parent()
-                self.sendCfm(req=cmd,title="_cmdCfm_", params=params)
+                self.sendCfm(req=cmd, title="_cmdCfm_", params=params)
                 return True
             else:
-                p["routing"] == False
+                p["routing"] = False
         # Walking the tree.
-        elif p["routing"] == False:
+        elif p["routing"] is False:
             if self.cluster.right:
                 params["routing"] = None
                 params["Congregation"] = self.cluster.right
-                self.sendCfm(req=cmd,title="_cmdCfm_", params=params)
+                self.sendCfm(req=cmd, title="_cmdCfm_", params=params)
             else:
                 params["routing"] = None
                 params["Congregation"] = self.cluster.parent()
-                self.sendCfm(req=cmd,title="_cmdCfm_", params=params)
+                self.sendCfm(req=cmd, title="_cmdCfm_", params=params)
         return False
 
     def sheetReq(self, cmd: dict):
         """ Update sheet """
         if self.redirecting(cmd):
             return
-        
-        
+
     def cmdReq(self, key: MUDPKey, cmd: dict):
         """ update/create cmd """
         # heading upwards, towards the summit Congregation.
@@ -350,14 +376,14 @@ class Congregation(RootHJ):
         if self.redirecting(cmd):
             return
         # heading downwards, towards the command.
-        if p["routing"] == False:
+        if p["routing"] is False:
             uuid = p["cmdUuid"]
             version = int(p["version"])
             # New version.
             if version == 0:
                 if self.cluster.newCmdHere():
                     self.ProcessReq(
-                        "_cmdCfm_", params=params,
+                        "_cmdCfm_", params=p,
                         title="h_", cmd=cmd,
                         processType=Hallelu,
                         processArgs=Hallelu.args(
@@ -371,12 +397,14 @@ class Congregation(RootHJ):
                 cmd = self.ws.getCmdUuid(uuid)
                 if cmd:
                     # Update local worksheet.
-                    (params, selected, desc) = self.ws.paramsCmd(cmd=cmd, at=p["cmd"])
-                    error = self.ws.updateCmd(self.ws.getCmdUuidWS(uuid), uuid, selected, changelog=True)
+                    (params, selected, desc) = self.ws.paramsCmd(cmd=cmd,
+                                                                 at=p["cmd"])
+                    error = self.ws.updateCmd(self.ws.getCmdUuidWS(uuid),
+                                              uuid, selected, changelog=True)
                     if error:
                         # Stop the cmdReq with the error message.
                         params["error"] = error
-                        self.sendCfm(req=cmd,title="_cmdCfm_", params=params)
+                        self.sendCfm(req=cmd, title="_cmdCfm_", params=params)
                         return
                     # If local command is running here
                     if self.ProcessStop(title="h_", cmd=cmd):
@@ -393,18 +421,18 @@ class Congregation(RootHJ):
             if self.cluster.left:
                 params["routing"] = False
                 params["Congregation"] = self.cluster.left
-                self.sendCfm(req=cmd,title="_cmdCfm_", params=params)
+                self.sendCfm(req=cmd, title="_cmdCfm_", params=params)
                 return
             else:
                 p["routing"] = None
-        
+
     def start(self, cmd: dict):
         """ Get list of running processes. """
         if MLogger.isDebug():
-           mlogger.debug(self.title+" start")
+            mlogger.debug(self.title+" start")
         # No parent but with a connection address, so try connecting.
         if not self.cluster.parent() and self.cluster.connect:
-            self.conreqTimer.start(k=1,v={})
+            self.conreqTimer.start(k=1, v={})
             self.sendReq(
                 title="_ConReq_",
                 params={"first": True},
@@ -419,17 +447,19 @@ class Congregation(RootHJ):
                     fn.startswith("j_")
                 )
             ):
-                ffn = os.path.join(self.processdir,fn)
+                ffn = os.path.join(self.processdir, fn)
                 if self._isProcessRunning(ffn):
                     self.pingTimers.start(ffn)
                     if MLogger.isDebug():
-                        mlogger.debug(self.title+" "+fn+" Hallelu or Jah still running")
+                        mlogger.debug(self.title+" "+fn +
+                                      " Hallelu or Jah still running")
                 else:
                     if MLogger.isDebug():
-                        mlogger.debug(self.title+" "+fn+" Hallelu or Jah not running")
+                        mlogger.debug(self.title+" "+fn +
+                                      " Hallelu or Jah not running")
 
     def usageReq(self, cmd: dict) -> None:
-        self.sendCfm(req=cmd,title="_usageCfm_", params={
+        self.sendCfm(req=cmd, title="_usageCfm_", params={
             "host": self.usage.host,
             "cpuUsage": self.usage.cpuUsage(),
             "diskUsage": self.usage.diskUsage(self.halleludir),
@@ -442,43 +472,48 @@ class Congregation(RootHJ):
 
     def JahReq(self, key: MUDPKey, cmd: dict) -> None:
         p = cmd["params"]
-        self.ProcessReq("_JahCfm_", "j_", cmd, Jah, Jah.args(os.getcwd(), p["cmdUuid"], self.port, self.halleludir))
+        self.ProcessReq("_JahCfm_", "j_", cmd, Jah,
+                        Jah.args(os.getcwd(), p["cmdUuid"], self.port,
+                                 self.halleludir))
 
-    def getTitle(self, fn:str) -> str:
+    def getTitle(self, fn: str) -> str:
         return fn[0:fn.index("_")]
 
     def ProcessStop(self, title: str, cmd: dict) -> bool:
         p = cmd["params"]
-        fn = os.path.join(self.halleludir,title + "_" + p["cmdUuid"] + ".json")
+        fn = os.path.join(self.halleludir,
+                          title + "_" + p["cmdUuid"] + ".json")
         return self.rmProcessFile(fn)
-        
-    def ProcessReq(self, cfm: str, params: dict, title: str, cmd: dict, processType: any, processArgs:list) -> None:
+
+    def ProcessReq(self, cfm: str, params: dict, title: str, cmd: dict,
+                   processType: any, processArgs: list) -> None:
         """
-        Create process file and start process, schedule a timer to check that the process has started.
+        Create process file and start process, schedule a timer to check that
+        the process has started.
         """
         p = cmd["params"]
         uuid = p["cmdUuid"]
-        fn = os.path.join(self.halleludir,title + "_" + uuid + ".json")
-        if self.createProcessfile(fn,cmd):
+        fn = os.path.join(self.halleludir, title + "_" + uuid + ".json")
+        if self.createProcessfile(fn, cmd):
             processArgs.append(MLogger.isDebug())
             if MLogger.isDebug():
                 mlogger.debug(self.title+" "+fn+" starting process")
-            p = Process(target=processType.child_main,args=processArgs)
+            p = Process(target=processType.child_main, args=processArgs)
             p.start()
-        self.processTimers.start(fn,{"msg": cfm, "params": params})
+        self.processTimers.start(fn, {"msg": cfm, "params": params})
 
     def tick(self) -> bool:
         """Check if newly started processes have started by their port number
            being in the process-file. Send Cfm with the port number when the
-           process started, and without a port number when process failed to 
+           process started, and without a port number when process failed to
            start. Also, check the running processes that they are still running
            by the last modified timestamp being updated on their process-file.
            Delete stale process-file, and send _STOP_ request to that process.
-           Processes are created again by whatever created them in the first place,
-           catering for scenarios like the node dying or overload.
+           Processes are created again by whatever created them in the first
+           place, catering for scenarios like the node dying or overload.
            """
         didSomething = super().tick()
-        for k,v in self.conreqTimers.expired():
+        for k, v in self.conreqTimers.expired():
             if MLogger.isDebug():
                 mlogger.debug(self.title+" tick : conreq expired")
             self.sendReq(
@@ -488,53 +523,59 @@ class Congregation(RootHJ):
             )
         for fn, expired, cfm in self.processTimers.walk():
             if MLogger.isDebug():
-                mlogger.debug(self.title+" tick : "+fn+" "+str(expired)+" "+str(cfm))
+                mlogger.debug(self.title+" tick : "+fn+" "+str(expired) +
+                              " "+str(cfm))
             didSomething = True
-            (cmd,port) = self.readProcessFile(fn)
+            (cmd, port) = self.readProcessFile(fn)
             if port != 0:
                 if MLogger.isDebug():
-                    mlogger.debug(self.title+" "+fn+" successfully started on port "+str(port))
+                    mlogger.debug(self.title+" "+fn +
+                                  " successfully started on port "+str(port))
                 self.processTimers.stop(fn)
                 self.pingTimers.start(fn)
                 if cfm:
-                    self.sendCfm(req=cmd,title=cfm, params={
+                    self.sendCfm(req=cmd, title=cfm, params={
                         "ip": self.host,
                         "port": port
                     })
             elif expired:
                 if MLogger.isDebug():
-                    mlogger.debug(self.title+" "+fn+":removed; Zero port, taking too long to start")
+                    mlogger.debug(
+                        self.title+" "+fn +
+                        ":removed; Zero port, taking too long to start")
                 self.rmProcessFile(fn)
                 if cfm:
-                    self.sendCfm(req=cmd,title=cfm, params={
+                    self.sendCfm(req=cmd, title=cfm, params={
                         "ip": self.host,
                         "port": 0
                     })
         for fn, v in self.pingTimers.expired():
             didSomething = True
             if self._isProcessRunning(fn):
-              self.pingTimers.start(fn)
+                self.pingTimers.start(fn)
         return didSomething
 
-    def _isProcessRunning(self, fn:str) -> int:
+    def _isProcessRunning(self, fn: str) -> int:
         """ Return port number when process is running, otherwise return 0. """
         if not os.path.exists(fn):
             return 0
-        (cmd,port) = self.readProcessFile(fn)
+        (cmd, port) = self.readProcessFile(fn)
         if not self.isExpiredProcessFile(fn):
             return port
         if port == 0:
             if MLogger.isDebug():
-                mlogger.debug(self.title+" "+fn+" stale and without a port, removing")
+                mlogger.debug(self.title+" "+fn +
+                              " stale and without a port, removing")
         else:
-            addr = (self.host,port)
+            addr = (self.host, port)
             try:
-                s = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 s.bind(addr)
                 if MLogger.isDebug():
-                    mlogger.debug(self.title+" "+fn+" stale, port in use, sending stop")
-                self.sendReq("_STOP_", {},addr)
-            except:
+                    mlogger.debug(self.title+" "+fn +
+                                  " stale, port in use, sending stop")
+                self.sendReq("_STOP_", {}, addr)
+            except Exception:
                 pass
         if MLogger.isDebug():
             mlogger.debug(self.title+" "+fn+" stale removing")
@@ -543,10 +584,13 @@ class Congregation(RootHJ):
 
     @staticmethod
     def main():
-        parser = argparse.ArgumentParser(description="Congregation monitors the host and start Halleleujah, Halleu and Jah")
-        parser.add_argument('processdir', help="Path to the directory where processing is tracked in files")
+        parser = argparse.ArgumentParser(description="""Congregation monitors
+ the host and start Halleleujah, Halleu and Jah""")
+        parser.add_argument('processdir', help="""Path to the directory where
+ processing is tracked in files""")
         parser.add_argument('--port', help="Port number, default is 59990")
-        parser.add_argument('-c', '--connect', help="IP:port used when first connecting to the database")
+        parser.add_argument('-c', '--connect', help="""IP:port used when first
+ connecting to the database""")
         parser.add_argument('-d', '--debug', help="debug", action="store_true")
         args = parser.parse_args()
         if not args.port:
@@ -555,7 +599,8 @@ class Congregation(RootHJ):
             args.port = int(args.port)
         if args.debug:
             MLogger.init("DEBUG")
-        h = Congregation(port=args.port, processdir=args.processdir, connectaddr=args.connect)
+        h = Congregation(port=args.port, processdir=args.processdir,
+                         connectaddr=args.connect)
         h.poll()
 
 
