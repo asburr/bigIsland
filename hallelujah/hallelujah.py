@@ -30,16 +30,21 @@ class Hallelujah(RootH,threading.Thread):
  the latest changes from the database, or push the local changes into the
  database.
     """
-    def __init__(self, congregationPort: int, worksheetdir: str, congregationHost: str=""):
+    def __init__(self, congregationPort: int, worksheetdir: str, 
+                 congregationHost: str=""):
         try:
             threading.Thread.__init__(self)
-            RootH.__init__(self,title="hj", congregationPort=congregationPort, congregationHost=congregationHost)
+            RootH.__init__(self,title="hj",
+                           congregationPort=congregationPort,
+                           congregationHost=congregationHost)
             if MLogger.isDebug():
                mlogger.debug(
                    f"{self.title} worksheetdir={worksheetdir}"
                )
             self.worksheets = MWorksheets(worksheetdir)
             self.processCmd.update({
+                "_sheetRsp_": self.__sheetRsp,
+                "_sheetCfm_": self.__cmdCfm,
                 "_cmdRsp_": self.__cmdRsp,
                 "_cmdCfm_": self.__cmdCfm
             })
@@ -60,11 +65,30 @@ class Hallelujah(RootH,threading.Thread):
 
     def pull(self, __cmd: dict = None) -> str:
         """
-        Queries the database for the commands and pull them into the local
-        worksheet.
+        Queries the database for the sheets and commands and pulls them into
+        the local worksheet.
         """
         if self.dbworksheets_state:
             return self.dbworksheets_state
+        self.dbworksheets.empty()
+        self.dbworksheets_state = "pulling"
+        v={
+            "msgtype": "_sheetInd_",
+            "params": {
+                "filters": self.filters,
+                "sheetUuid": None,
+                "routing": True
+            },
+            "addr":self.congregation_addr
+        }
+        self.cmdTimer.start(k=1,v=v)
+        self.sendReq(
+            title=v["msgtype"],
+            params=v["params"],
+            remoteAddr=v["addr"]
+        )
+        while self.dbworksheets_state == "pulling":
+            time.sleep(1)
         self.dbworksheets_state = "pulling"
         v={
             "msgtype": "_cmdInd_",
@@ -76,7 +100,6 @@ class Hallelujah(RootH,threading.Thread):
             "addr":self.congregation_addr
         }
         self.cmdTimer.start(k=1,v=v)
-        self.dbworksheets.empty()
         self.sendReq(
             title=v["msgtype"],
             params=v["params"],
@@ -86,28 +109,32 @@ class Hallelujah(RootH,threading.Thread):
             time.sleep(1)
         error = self.worksheets.pull(self.dbworksheets.dir)
         self.dbworksheets_state = None
+        print(f"Pulled - cleared state {self.dbworksheets_state}")
         return error
 
-    def __cmdRsp(self, key: MUDPKey, cmd: dict) -> None:
-        """ Build worksheet from cmds in cmdRsp. Resend the first cmdind
-            towards the summit congregation. Or, resend to the next congregation.
-            Otherwise, no more cmds and then the worksheet is complete.
-        """
-        p = cmd["params"]
-        c = p["cmd"]
-        if c:
-            (params, selected, description) = self.dbworksheets.paramsCmd(cmd=c,at=None)
-            self.dbworksheets.updateCmd(c["uuid"], None, selected, changelog=False)
+    def __continueReq(self,cmd: dict,status:str):
+        """ Stop or continue requesting worksheet from database. """
         # Get params from timer before stopping it.
+        p = cmd["params"]
         v = self.cmdTimer.get(1)
         self.cmdTimer.stop(1)
+        if status and status not in ["deleted", "created", "updated"]:
+            print(cmd)
+            self.dbworksheets.save(self.dbworksheets.dir)
+            self.dbworksheets_state = "failed"
+            return
         # No more redirections means this is the last response.
         if "Congregation" not in cmd:
+            print(cmd)
             self.dbworksheets.save(self.dbworksheets.dir)
             self.dbworksheets_state = "built"
+            print("Setting built")
+            print(cmd)
             return
         # More redirections, copy the routing indicator and address from the response.
         v["params"]["routing"] = p["routing"]
+        if status:
+            v["params"]["status"] = status
         v["addr"] = p["Congregation"]
         self.cmdTimer.start(k=1,v=v)
         self.sendReq(
@@ -116,12 +143,41 @@ class Hallelujah(RootH,threading.Thread):
             remoteAddr=v["addr"]
         )
 
+    def __sheetRsp(self, key: MUDPKey, cmd: dict) -> None:
+        """ Build worksheet from sheet in sheetRsp. """
+        p = cmd["params"]
+        status=None
+        if p:
+            s = p["sheet"]
+            if s:
+                oldName = self.dbworksheets.getSheetName(s["uuid"])
+                status = self.dbworksheets.updateSheet(
+                    s["uuid"],oldName,s["name"])
+        self.__continueReq(cmd,status)
+
+    def __cmdRsp(self, key: MUDPKey, cmd: dict) -> None:
+        """ Build worksheet from cmds in cmdRsp. """
+        p = cmd["params"]
+        status=None
+        if p:
+            c = p["cmd"]
+            if c:
+                oldCmd = self.dbworksheets.getCmdUuid(c["uuid"])
+                if oldCmd:
+                    (oldparams, oldselected,
+                     olddescription) = self.dbworksheets.paramsCmd(cmd=oldCmd,at=None)
+                (params, selected,
+                 description) = self.dbworksheets.paramsCmd(cmd=c,at=None)
+                status = self.dbworksheets.updateCmd(
+                    c["uuid"], c["cmd"], oldselected, selected, changelog=False)
+        self.__continueReq(cmd,status)
+
     def push(self, change:MJournalChange) -> str:
         """
         Returns None when successfully pushed the change into the database. Return a string describing the error when failed to push the change into the database.
         """
         if self.dbworksheets_state:
-            raise Exception("Two calls to push() at the same time is not supported")
+            raise Exception(f"Two calls to push() {self.dbworksheets_state} at the same time is not supported")
         while True:
             v = {
                 "msgtype": change.msgType(),
@@ -152,7 +208,6 @@ class Hallelujah(RootH,threading.Thread):
         p = cmd["params"]
         if "Congregation" in p: # Redirect request.
             v["params"]["routing"] = p["routing"]
-            print(v)
             self.cmdTimer.start(k=1,v=v)
             self.sendReq(
                 title=v["msgtype"],
@@ -160,7 +215,7 @@ class Hallelujah(RootH,threading.Thread):
                 remoteAddr=p["Congregation"]
             )
         else:
-            if p["status"] == "updated":
+            if p["status"] in ["deleted", "created", "updated"]:
                 self.dbworksheets_state = "pushed"
             else:
                 self.dbworksheets_state = "failed"

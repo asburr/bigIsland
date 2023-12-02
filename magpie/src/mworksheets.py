@@ -56,10 +56,14 @@ class MWorksheetsCmdChange(MJournalChange):
         return "_cmdReq_"
 
 
-class MWorksheetsCmdDelete(MWorksheetsCmdChange):
+class MWorksheetsCmdDelete(MJournalChange):
     """ Delete a command.  """
     def __init__(self, ws: str, cmduuid: str, cmdname: str, oldselected: dict, when:MZdatetime = None):
-        super().__init__(ws, cmduuid, cmdname, oldselected, {}, when)
+        super().__init__(when)
+        self.ws = ws
+        self.cmduuid = cmduuid
+        self.cmdname = cmdname
+        self.oldselected = oldselected
 
     def msgParams(self) -> dict:
         return {
@@ -74,10 +78,15 @@ class MWorksheetsCmdDelete(MWorksheetsCmdChange):
         return "_cmdReq_"
 
 
-class MWorksheetsCmdAdd(MWorksheetsCmdChange):
+class MWorksheetsCmdAdd(MJournalChange):
     """ Add a command.  """
-    def __init__(self, ws: str, cmduuid: str, cmdname: str, newselected: dict, when:MZdatetime = None):
-        super().__init__(ws, cmduuid, cmdname, {}, newselected, when)
+    def __init__(self, ws: str, cmduuid: str, cmdname: str,
+                 newselected: dict, when:MZdatetime = None):
+        super().__init__(when)
+        self.ws = ws
+        self.cmduuid = cmduuid
+        self.cmdname = cmdname
+        self.newselected = newselected
 
     def msgParams(self) -> dict:
         return {
@@ -352,6 +361,37 @@ class MWorksheets:
                         else:
                             raise Exception("Unknown feed "+feed+" in "+ws["uuid"])
 
+    def findCmd(self, sheetuuid: str, cmduuid: str, feed:str) -> dict:
+        """
+        Return the cmd that matches the constraints of sheetuuid
+        and/or cmduuid and/or feed name.
+        """
+        if cmduuid:
+            cmd = self.getCmdUuid(cmduuid)
+            if not cmd:
+                return None
+            if sheetuuid and sheetuuid != self.getWorkSheetUuid(cmduuid):
+                return None
+            if feed:
+                if cmd != self.getCmd(feed):
+                    return None
+            return cmd
+        elif feed:
+            cmd = self.getCmd(feed)
+            if not cmd:
+                return None
+            if sheetuuid and sheetuuid != self.getWorkSheetUuid(cmduuid):
+                return None
+            return cmd
+        elif sheetuuid: # If there is one cmd in the sheet.
+            sheet = self.ws.get(sheetuuid,None)
+            if not sheet:
+                return None
+            cmds = sheet["cmds"]
+            if len(cmds) == 1:
+                return cmds[0]
+        return None
+
     def getWorkSheetCmds(self, sheetuuid: str) -> dict:
         sheet = self.ws[sheetuuid]
         for cmd in sheet["cmds"]:
@@ -435,12 +475,17 @@ class MWorksheets:
                 self._expandcmd(self.expandingcmd, self.schema[cmdname])
 
     def cmd_titles(self) -> list:
-        return [x for x in self.schema.keys() if x not in self.keyfields and not x.endswith(".macro")]
+        return [x for x in self.schema.keys() if x not in self.keyfields and not x.endswith(".macro") and not x.startswith("_")]
 
     def cmd_descriptions(self) -> list:
         return {name: self.schema[name]["desc"] for name in self.schema.keys() if name not in self.keyfields and not name.endswith(".macro")}
 
+    def getSheetName(self,uuid:str) -> str:
+        """ get Worksheet from uuid. """
+        return self.ws.get(uuid,{}).get("name",None)
+
     def titles(self) -> list:
+        """ Worksheet titles. """
         return [self.ws[uuid]["name"] for uuid in self.ws.keys()]
 
     def uuidAtIdx(self, idx: int) -> str:
@@ -458,15 +503,22 @@ class MWorksheets:
         if uuid in self.ws:
             if oldtitle != self.ws[uuid]["name"]:
                 return "wrong version"
+            if title == self.ws[uuid]["name"]:
+                return "no change"
             self.ws[uuid]["name"] = title
         else:
             if oldtitle is not None:
-                return "No old version to update...should the sheet be added anyway?"
+                return "redirect" # Redirect towards the congregation with the sheet.
+            # TODO; why should the new sheet be added here?????
             self.ws[uuid] = {"name":title, "uuid": uuid, "cmds":[]}
             self.wsl.append(self.ws[uuid])
         if changelog:
             self.save(self.changes.add(MWorksheetsSheetChange(uuid,oldtitle,title)))
-        return ""
+        if not oldtitle:
+            return "created"
+        if not title:
+            return "deleted"
+        return "updated"
 
     def inputCmdOutput(self, title: str) -> list:
         rows=[]
@@ -672,7 +724,7 @@ class MWorksheets:
                 return
 
     def nextCmdUuid(self, cmduuid: str) -> str:
-        """ Get next cmd UUID by previous cmd UUID. """
+        """ Return the next cmd UUID after the previous cmd UUID. """
         found = False
         for ws in self:
             for cmd in ws["cmds"]:
@@ -791,7 +843,8 @@ class MWorksheets:
         else:
             raise Exception("Unexpected type " + t)
 
-    def updateCmd(self, wsn: str, cmdUuid: str, cmdname: str, oldselected: dict, selected: dict, changelog:bool=True) -> str:
+    def updateCmd(self, wsn: str, cmdUuid: str, cmdname: str,
+                  oldselected: dict, selected: dict, changelog:bool=True) -> str:
         """ Update values in command from selected values.
             Inserts the selected values into the change log at the current
             position. Saves the version of the worksheet such that a call
@@ -844,14 +897,16 @@ class MWorksheets:
             try:
                 for feed in feeds:
                     if feed in self.feeds:
-                        raise Exception("duplicate feed name " + feed)
+                        error = "duplicate feed name " + feed
+                        break
                     undofeeds.append(feed)
                     self.feeds[feed] = (wsn, cmd)
-                error = self.verifycmds(self.ws[wsn]["cmds"])
-                self.expandingcmd = cmd[cmdname]
-                self._expandcmd(self.expandingcmd, self.schema[cmdname])
+                if not error:
+                    error = self.verifycmds(self.ws[wsn]["cmds"])
+                    self.expandingcmd = cmd[cmdname]
+                    self._expandcmd(self.expandingcmd, self.schema[cmdname])
             except Exception as e:
-                traceback.print_exc()
+                # traceback.print_exc()
                 error = str(e)
         if error:
             # Restore command

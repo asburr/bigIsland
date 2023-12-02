@@ -150,6 +150,7 @@ class WiWS(wx.Frame):
         self.usage = MUsage()
 
     def refreshSelection(self):
+        print("refreshSelection")
         change = self.ws.changes.currentChange()
         self.currentChange.SetLabel(str(change))
         if change:
@@ -158,6 +159,7 @@ class WiWS(wx.Frame):
             changes=[]
         self.ws_selectionUNDO.SetItems(changes)
         self.ws_selectionUNDO.SetValue("UNDO")
+        print("refreshSelection A")
         change = self.ws.changes.nextChange()
         if change:
             changes=[str(change)]
@@ -167,6 +169,7 @@ class WiWS(wx.Frame):
         self.ws_selectionDEL.SetValue("DEL")
         self.ws_selectionREDO.SetItems(changes)
         self.ws_selectionREDO.SetValue("REDO")
+        print("refreshSelection B")
         wsns = self.ws.titles()
         wsns.append("new worksheet")
         self.ws_selection.SetItems(wsns)
@@ -177,6 +180,7 @@ class WiWS(wx.Frame):
             self.panel.Layout()
             self.Layout()
             self.Show()
+        print("refreshSelection X")
 
     def on_addcmd(self, event):
         wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
@@ -240,12 +244,14 @@ class WiWS(wx.Frame):
             wx.MessageBox(error,"",wx.OK, self)
             event.Skip(False)
             return
+        if self.hj.dbworksheets_state:
+            print(self.hj.dbworksheets_state)
         error = self.hj.push(change)
         if error:
+            print("Error"+error+"*")
             wx.MessageBox(error,"",wx.OK, self)
-            error = self.hj.worksheets.undo()
-            if error:
-                wx.MessageBox(error,"",wx.OK, self)
+            if not self.hj.worksheets.undo():
+                wx.MessageBox("Failed to undo","",wx.OK, self)
             event.Skip(False)
         wsn = self.hj.worksheets.wsnCurrentChange()
         if wsn:

@@ -296,7 +296,7 @@
         }
     }, "routing.macro": {
         "type": "bool",
-        "desc": "Routing indicator for Request and Indication messages as they traverse the Congregations: (true) heading upwards, towards the summit Congregation; (false) heading downwards and if from left hand-side go to right hand-side, if from right hand-side go to parent, otherwise if not from right and left hand-side go to left hand-side."
+        "desc": "Routing indicator for Request and Indication messages as they traverse the Congregations. True when routing towards the summit Congregation. False and None when walking the congregations. False when from the left-hand-side and going down the right-hand-side. False when from right-hand-side and going back up to the parent. False when from parent and going down to left hand-side."
     }, "_ConReq_": {
         "type": "composite",
         "desc": "Congregation requests connection into the database",
@@ -309,20 +309,28 @@
         "routing": {
             "type": "routing.macro"
         },
-        "resend": {
+        "Congregation": {
             "type": "address.macro", "default": null,
             "desc": "Resend is present when the final destination is not reached, and ConReq needs to be resent to this address to continue on its journey."
         },
         "cluster": {
-            "type": "listComposites", "default": null,
+            "type": "composite", "default": null,
             "desc": "Congregation has been added to this cluster",
-            "Congregation": {
+            "top": {
                 "type": "address.macro",
-                "desc": "Addresses of another Congregation in the cluster"
+                "desc": "Addresses of Congregation in the cluster"
+            },
+            "left": {
+                "type": "address.macro",
+                "desc": "Addresses of Congregation in the cluster"
+            },
+            "right": {
+                "type": "address.macro",
+                "desc": "Addresses of Congregation in the cluster"
             },
             "worksheet": {
                 "type": "any", "default": null,
-                "desc": "Worksheet detailing the commands supported by this congregation."
+                "desc": "Worksheet detailing the commands supported by top congregation in the cluster."
             }
         }
     }, "_CongregationSizeReq_": {
@@ -431,6 +439,53 @@
             "type": "address.macro",
             "desc": "Address of the Congregation where to send another cmdInd for the next command. Or, towards the summit for the first comInd"
         }
+    }, "sheetFilter.macro": {
+        "type": "composite",
+        "desc": "Sent from user to Hallelujah to find the first sheet in the database, or to Congregation to find the next sheet.",
+        "sheetUuid": {
+            "type": "str", "default": null,
+            "desc": "Optional sheet UUID"
+        }
+    }, "_sheetInd_": {
+        "type": "composite",
+        "desc": "Request sheets in the database",
+        "filters": {
+            "type": "sheetFilter.macro",
+            "desc": "Filter used to select the command in sheetInd"
+        },
+        "routing": {
+            "type": "routing.macro"
+        },
+        "sheetUuid": {
+            "type": "str",
+            "desc": "The last cmd UUID received in sheetRsp."
+        }
+    }, "_sheetRsp_": {
+        "type": "composite",
+        "desc": "Response from Congregation about the next sheet matching the criterior in sheetInd.",
+        "filters": {
+            "type": "sheetFilter.macro",
+            "desc": "Filter used to select the sheet in sheetInd"
+        },
+        "sheet": {
+            "type": "composite", "default": null,
+            "desc": "Sheet is optional, present when addressed has the sheet that matches the criterior",
+            "uuid": {
+                "type": "str",
+                "desc": "sheet UUID"
+            },
+            "name": {
+                "type": "str",
+                "desc": "Name for the sheet"
+            }
+        },
+        "routing": {
+            "type": "routing.macro"
+        },
+        "Congregation": {
+            "type": "address.macro",
+            "desc": "Address of the Congregation where to send another sheetInd for the next sheet. Or, towards the summit for the first sheet"
+        }
     }, "_schReq_": {
         "type": "composite",
         "desc": "Sent by user to Congregation to update the schema.",
@@ -450,7 +505,7 @@
         }
     }, "_cmdReq_": {
         "type": "composite",
-        "desc": "Sent by user to Congregation where the cmd is located to update a command.",
+        "desc": "Sent by user to Congregation where the cmd is located to update/add a command.",
         "cmdUuid": {
             "type": "str",
             "desc": "cmd UUID"
@@ -484,14 +539,6 @@
             "type": "str",
             "choice": ["redirect", "deleted", "created", "updated", "wrong version", "no change", "timeout"],
             "desc": "Update status."
-        },
-        "feedsInUse": {
-            "type": "listComposites", "default": null,
-            "desc": "For error feed in use, the feeds being used are listed here.",
-            "feedname": {
-                "type": "str",
-                "desc": "feed name"
-            }
         }
     }, "_sheetReq_": {
         "type": "composite",

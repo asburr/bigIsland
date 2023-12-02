@@ -318,6 +318,7 @@ class MJournal:
         if n:
             nextlogfile = os.path.join(self.dir,f"{n}.log")
             with open(nextlogfile, "r") as f:
+                print(nextlogfile)
                 nextlog = json.load(f)
             return MJournalChange.fromJson(nextlog[self.__change__],self.changeFactoryClass)
         return None
