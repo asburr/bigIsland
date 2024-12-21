@@ -23,9 +23,9 @@ import threading
 import time
 
 
-class Hallelujah(RootH,threading.Thread):
+class WorksheetManager(RootH,threading.Thread):
     """
- Hallelujah is a thread that manages user interactions with the database.
+ WorksheetManager is a thread that manages user interactions with the database.
  A local copy of the worksheet is maintained. The user can pull
  the latest changes from the database, or push the local changes into the
  database.
@@ -65,6 +65,7 @@ class Hallelujah(RootH,threading.Thread):
 
     def pull(self, __cmd: dict = None) -> str:
         """
+        TODO; Get schema.
         Queries the database for the sheets and commands and pulls them into
         the local worksheet.
         """
@@ -109,7 +110,6 @@ class Hallelujah(RootH,threading.Thread):
             time.sleep(1)
         error = self.worksheets.pull(self.dbworksheets.dir)
         self.dbworksheets_state = None
-        print(f"Pulled - cleared state {self.dbworksheets_state}")
         return error
 
     def __continueReq(self,cmd: dict,status:str):
@@ -119,17 +119,13 @@ class Hallelujah(RootH,threading.Thread):
         v = self.cmdTimer.get(1)
         self.cmdTimer.stop(1)
         if status and status not in ["deleted", "created", "updated"]:
-            print(cmd)
             self.dbworksheets.save(self.dbworksheets.dir)
             self.dbworksheets_state = "failed"
             return
         # No more redirections means this is the last response.
         if "Congregation" not in cmd:
-            print(cmd)
             self.dbworksheets.save(self.dbworksheets.dir)
             self.dbworksheets_state = "built"
-            print("Setting built")
-            print(cmd)
             return
         # More redirections, copy the routing indicator and address from the response.
         v["params"]["routing"] = p["routing"]
@@ -229,7 +225,6 @@ class Hallelujah(RootH,threading.Thread):
             v["first"] = True
             v["addr"] = self.congregation_addr
             self.cmdTimer.start(k=k,v=v)
-            print(v)
             self.sendReq(
                 title=v["msgtype"],
                 params=v["params"],
@@ -242,14 +237,14 @@ class Hallelujah(RootH,threading.Thread):
 
     @staticmethod
     def main():
-        parser = argparse.ArgumentParser(description="Hallelujah tester")
+        parser = argparse.ArgumentParser(description="WorksheetManager tester")
         parser.add_argument('port', help="Congregation port")
         parser.add_argument('dir', help="worksheet dir")
         parser.add_argument("-d",'--debug', help="Debug logging")
         args = parser.parse_args()
         if args.debug:
             MLogger.init("DEBUG")
-        h = Hallelujah(
+        h = WorksheetManager(
                 congregationPort=int(args.port),
                 worksheetdir=args.dir
             )
@@ -257,4 +252,4 @@ class Hallelujah(RootH,threading.Thread):
 
 
 if __name__ == "__main__":
-    Hallelujah.main()
+    WorksheetManager.main()

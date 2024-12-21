@@ -13,7 +13,7 @@ import json
 import os
 from inspect import currentframe
 from magpie.src.mistype import MIsType
-from magpie.src.mjournal import MJournal, MJournalChange, MJournalChangeFactory
+from magpie.src.mjournal import MJournal, MJournalChange, MJournalChangeFactory, MJournalRebase
 import re
 import argparse
 import traceback
@@ -29,9 +29,9 @@ class MWorkSheetException(Exception):
 
 class MWorksheetsCmdChange(MJournalChange):
     """ A change to a command. Oldselected is used by the databases, to verify that the database has the same version of the command. """
-    def __init__(self, ws: str, cmduuid: str, cmdname: str, oldselected: dict, newselected: dict, when:MZdatetime = None):
+    def __init__(self, wsuuid: str, cmduuid: str, cmdname: str, oldselected: dict, newselected: dict, when:MZdatetime = None):
         super().__init__(when)
-        self.ws = ws
+        self.wsuuid = wsuuid
         self.cmduuid = cmduuid
         self.cmdname = cmdname
         self.oldselected = oldselected
@@ -46,7 +46,7 @@ class MWorksheetsCmdChange(MJournalChange):
     def msgParams(self) -> dict:
         return {
             "cmdUuid": self.cmduuid,
-            "sheetUuid": self.ws,
+            "sheetUuid": self.wsuuid,
             "oldcmd": self.oldselected,
             "newcmd": self.selected,
             "routing": True
@@ -54,13 +54,16 @@ class MWorksheetsCmdChange(MJournalChange):
 
     def msgType(self) -> str:
         return "_cmdReq_"
+    
+    def reversed(self) -> "MWorksheetsCmdChange":
+        return MWorksheetsCmdChange(self.wsuuid, self.cmduuid, self.cmdname, oldselected=self.newselected, newselected=self.oldselected)
 
 
 class MWorksheetsCmdDelete(MJournalChange):
     """ Delete a command.  """
-    def __init__(self, ws: str, cmduuid: str, cmdname: str, oldselected: dict, when:MZdatetime = None):
+    def __init__(self, wsuuid: str, cmduuid: str, cmdname: str, oldselected: dict, when:MZdatetime = None):
         super().__init__(when)
-        self.ws = ws
+        self.wsuuid = wsuuid
         self.cmduuid = cmduuid
         self.cmdname = cmdname
         self.oldselected = oldselected
@@ -68,7 +71,7 @@ class MWorksheetsCmdDelete(MJournalChange):
     def msgParams(self) -> dict:
         return {
             "cmdUuid": self.cmduuid,
-            "sheetUuid": self.ws,
+            "sheetUuid": self.wsuuid,
             "oldcmd": self.oldselected,
             "newcmd": {},
             "routing": True
@@ -77,13 +80,16 @@ class MWorksheetsCmdDelete(MJournalChange):
     def msgType(self) -> str:
         return "_cmdReq_"
 
+    def reversed(self) -> "MWorksheetsCmdAdd":
+        return MWorksheetsCmdAdd(self.wsuuid, self.cmduuid, self.cmdname, newselected=self.oldselected)
+
 
 class MWorksheetsCmdAdd(MJournalChange):
     """ Add a command.  """
-    def __init__(self, ws: str, cmduuid: str, cmdname: str,
+    def __init__(self, wsuuid: str, cmduuid: str, cmdname: str,
                  newselected: dict, when:MZdatetime = None):
         super().__init__(when)
-        self.ws = ws
+        self.wsuuid = wsuuid
         self.cmduuid = cmduuid
         self.cmdname = cmdname
         self.newselected = newselected
@@ -91,7 +97,7 @@ class MWorksheetsCmdAdd(MJournalChange):
     def msgParams(self) -> dict:
         return {
             "cmdUuid": self.cmduuid,
-            "sheetUuid": self.ws,
+            "sheetUuid": self.wsuuid,
             "oldcmd": {},
             "newcmd": self.newselected,
             "routing": True
@@ -99,6 +105,9 @@ class MWorksheetsCmdAdd(MJournalChange):
 
     def msgType(self) -> str:
         return "_cmdReq_"
+
+    def reversed(self) -> "MWorksheetsCmdDelete":
+        return MWorksheetsCmdDelete(self.wsuuid, self.cmduuid, self.cmdname, oldselected=self.newselected)
 
 
 class MWorksheetsSheetChange(MJournalChange):
@@ -128,40 +137,26 @@ class MWorksheetsSheetChange(MJournalChange):
     def msgType(self) -> str:
         return "_sheetReq_"
 
-
-class MWorksheetsRebaseChange(MJournalChange):
-    """ A rebase to a new root. """
-    def __init__(self, sourcePath:str, when:MZdatetime = None):
-        super().__init__(when)
-        self.sourcePath = sourcePath
-        pass
-    
-    def __str__(self):
-        return self.when.strftime(short=True)+" newbase "
-
-    def msgType(self) -> str:
-        return None
+    def reversed(self) -> "MWorksheetsSheetChange":
+        return MWorksheetsSheetChange(self.wsuuid, oldname=self.worksheetname, worksheetname=self.oldname)
 
 
 class MWorksheetsChangeFactory(MJournalChangeFactory):
     def make(j: dict):
         if not j:
           return None
-        x = copy.copy(j)
         t = j["type"]
-        del x["type"]
-        x["when"] = MZdatetime.strptime(j["when"])
         if t == "MWorksheetsCmdChange":
-            return MWorksheetsCmdChange(**x)
+            return MWorksheetsCmdChange(**MJournalChangeFactory.jsonToDict(j))
         if t == "MWorksheetsCmdAdd":
-            return MWorksheetsCmdAdd(**x)
+            return MWorksheetsCmdAdd(**MJournalChangeFactory.jsonToDict(j))
         if t == "MWorksheetsCmdDelete":
-            return MWorksheetsCmdDelete(**x)
+            return MWorksheetsCmdDelete(**MJournalChangeFactory.jsonToDict(j))
         if t == "MWorksheetsSheetChange":
-            return MWorksheetsSheetChange(**x)
-        if t == "MWorksheetsRebaseChange":
-            return MWorksheetsRebaseChange(**x)
-        return super().fromJson(x)
+            return MWorksheetsSheetChange(**MJournalChangeFactory.jsonToDict(j))
+        if t == "MJournalRebase":
+            return MJournalRebase(**MJournalChangeFactory.jsonToDict(j))
+        return super(j)
 
 
 class MCmd:
@@ -182,6 +177,11 @@ class MCmd:
 class MWorksheets:
     """
   MWorksheets: a language of data grooming.
+  Data is groomed as it flow through commands and a worksheet is a collection
+  of commands. Commands are uniquely identified by a uuid. Users connect
+  to a database and the commands in the database are synchronized with the
+  local copy of the commands. The local commands are what the user thinks are
+  in the database which may be different due to other users changes.
     """
     def __init__(self, dir: str):
         self.verify_handlers = {
@@ -488,6 +488,10 @@ class MWorksheets:
         """ Worksheet titles. """
         return [self.ws[uuid]["name"] for uuid in self.ws.keys()]
 
+    def title(self,uuid:str) -> str:
+        """ Worksheet title. """
+        return self.ws.get(uuid,{"name":""})["name"]
+
     def uuidAtIdx(self, idx: int) -> str:
         """ Return worksheet at uuid index, see titles() """
         return list(self.ws.keys())[idx]
@@ -505,7 +509,11 @@ class MWorksheets:
                 return "wrong version"
             if title == self.ws[uuid]["name"]:
                 return "no change"
-            self.ws[uuid]["name"] = title
+            if title:
+                self.ws[uuid]["name"] = title
+            else:
+                self.wsl.remove(self.ws[uuid])
+                del self.ws[uuid]
         else:
             if oldtitle is not None:
                 return "redirect" # Redirect towards the congregation with the sheet.
@@ -580,6 +588,8 @@ class MWorksheets:
  is used by parent option to determine if the command has activated this
  substructure as an option.
         """
+        if not cmd:
+            return False
         nxtat = at
         # print("paramscmd at=" + str(at) + " parent=" + str(parent)+" cmd="+str(cmd))
         if at is not None and parent:  # Searching for a subtree.
@@ -985,15 +995,17 @@ class MWorksheets:
         Put the worksheets into the root of the change log.
         Walk thru each command, creating new changes for any difference.
         Version is not relevant. DB is the master. The local copy is the
-        changes that need to be deployed to  upgrade the DB.
+        changes that need to be deployed to upgrade the DB.
         TODO; with local changes, current is forgotten, and moved to the empty head when there are changes.
         """
         # Delete all change prior to current root.
         oldcurrent = self.changes.current()
+        oldcurrentPath = self.changes.currentPath()
         self.changes.prune()
         oldroot = MWorksheets(self.dir)
+        #oldroot = MWorksheets(oldcurrentPath)
         # Add worksheets as the new root.
-        newroot = self.changes.insertRoot(MWorksheetsRebaseChange(worksheetdir))
+        newroot = self.changes.insertRoot(MJournalRebase(worksheetdir))
         # Save DB as the new root
         ws = MWorksheets(worksheetdir)
         ws.__readWorksheets(worksheetdir)
@@ -1002,7 +1014,7 @@ class MWorksheets:
         if oldroot:
             # Add local changes for difference between new Root and old root
             if not self.addChanges(oldroot):
-                # Delete the above MWorksheetsRebaseChange
+                # Delete the above MJournalRebase
                 self.changes.rewind()
                 self.changes.delete()
                 while self.changes.current() != oldcurrent:
@@ -1022,7 +1034,11 @@ class MWorksheets:
         while self.changes.current() != current:
             self.changes.up()
         return (change.ws,change.cmd)
-        
+    
+    def listChanges(self) -> list:
+        """ Return a list of changes. """
+        return self.changes.getChanges()
+
     def push(self) -> None:
         """ Push first change as the root of the chain.
         """
@@ -1051,12 +1067,12 @@ class MWorksheets:
             oldselected = {}
             if cmd:
                 (params, oldselected, description) = self.paramsCmd(cmd,at=None)
-            error = self.updateCmd(wsc.ws,wsc.cmduuid,wsc.cmdname,oldselected,wsc.selected,changelog=False)
+            error = self.updateCmd(wsc.ws,wsc.cmduuid,wsc.cmdname,oldselected,wsc.newselected,changelog=False)
             if error:
                 return error
         elif type(wsc) == MWorksheetsSheetChange:
             self.updateSheet(wsc.wsuuid, wsc.oldname, wsc.worksheetname,changelog=False)
-        elif type(wsc) == MWorksheetsRebaseChange:
+        elif type(wsc) == MJournalRebase:
             return "Cannot redo a rebase which is the base for subsequent changes"
         self.changes.up()
         self.save(self.changes.currentPath())
@@ -1069,7 +1085,7 @@ class MWorksheets:
             return c.wsuuid
         return None
     
-    def deleteNextChange(self) -> bool:
+    def deleteNextChange(self) -> None:
         """ Deletes the next change. """
         self.changes.delete()
 

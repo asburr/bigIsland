@@ -48,6 +48,10 @@ class WiGrid():
     def update(self, titles: list, row_col: list) -> None:
         self.leny = len(row_col)
         self.lenx = len(titles)
+        if not self.leny:
+            self.grid.ClearGrid()
+            self.grid.Hide()
+            return
         if self.lenx > self.grid.GetNumberCols():
             self.grid.AppendCols(self.lenx - self.grid.GetNumberCols())
         if self.grid.GetNumberCols() > self.lenx:

@@ -21,13 +21,11 @@ from magpie.src.mlogger import MLogger, mlogger
 from magpie.src.mzdatetime import MZdatetime
 
 
-class MJournalChangeFactory:
-    def make(j:dict) -> "MJournalChange":
-        raise Exception("Not implemented")
-       
-
 class MJournalChange:
     """ A change. """
+    __type__ = "type"
+    __when__ = "when"
+
     def __init__(self,when:MZdatetime):
         if when is None:
             self.when=MZdatetime()
@@ -35,10 +33,10 @@ class MJournalChange:
             self.when = when
 
     def json(self):
-        d={"type": self.__class__.__name__}
+        d={self.__type__: self.__class__.__name__}
         for k, v in self.__dict__.items():
             d[k] = v
-        d["when"] = d["when"].strftime(short=True)
+        d[self.__when__] = d[self.__when__].strftime(short=True)
         return d
 
     def fromJson(j: dict, factoryClass) -> "MJournalChange":
@@ -50,6 +48,28 @@ class MJournalChange:
     def msgParams(self) -> dict:
         """ Database message parameters for this change. """
         return {}
+    
+    def msgType(self) -> str:
+        """ Database message type for this change. """
+        return ""
+    
+    def reversed(self) -> "MJournalChange":
+        """ Reverse the change to undo. """
+        return ""
+
+
+class MJournalRebase(MJournalChange):
+    """ A rebase to a new root, this in itself is not a change. """
+    def __init__(self, sourcePath:str, when:MZdatetime = None):
+        super().__init__(when)
+        self.sourcePath = sourcePath
+        pass
+    
+    def __str__(self):
+        return self.when.strftime(short=True)+" newbase "
+
+    def msgType(self) -> str:
+        return None
 
 
 class MJournalChangeTest(MJournalChange):
@@ -58,21 +78,34 @@ class MJournalChangeTest(MJournalChange):
         self.label=label
 
 
+class MJournalChangeFactory:
+    def jsonToDict(j:dict) -> dict:
+        x=copy.copy(j)
+        x[MJournalChange.__when__] = MZdatetime.strptime(j[MJournalChange.__when__])
+        del x[MJournalChange.__type__]
+        return x
+
+    def make(j:dict) -> "MJournalChange":
+        if not j:
+          return None
+        t = j[MJournalChange.__type__]
+        if t == "MJournalRebase":
+            return MJournalRebase(**MJournalChangeFactory.jsonToDict(j))
+        raise Exception(f"Not implemented for {t}")
+
+
 class MJournalChangeTestFactory(MJournalChangeFactory):
     def make(j: dict):
         if not j:
             return None
-        x = copy.copy(j)
-        t = j["type"]
-        del x["Type"]
-        x["when"] = MZdatetime.strptime(j["when"])
+        t = j[MJournalChange.__type__]
         if t == "MJournalChangeTest":
-            return MJournalChangeTest(**x)
-        raise Exception("Unknown type "+t)
+            return MJournalChangeTest(**MJournalChangeFactory.jsonToDict(j))
+        return super().make(j)
 
 
 class MJournal:
-    """ Journal is chain of changes, stored in a directory with each file
+    """ MJournal is chain of changes, stored in a directory with each file
         documenting a change,
           {
             __previous__: None,
@@ -163,7 +196,7 @@ class MJournal:
             change = False
             for name in os.listdir(path=self.dir):
                 p = os.path.join(self.dir,name)
-                if os.path.isfile(p):
+                if os.path.isfile(p) and not name.startswith("."):
                     with open(p, "r") as f:
                         if name == self.__head__:
                             head = json.load(f)
@@ -186,7 +219,7 @@ class MJournal:
                                         mlogger.warning(f"Current moved to head {head}")
                                     with open(self.__currentPath, "w") as f:
                                         json.dump(head,f)
-                        else:
+                        elif name.endswith(".log"):
                             log = json.load(f)
                             if log[self.__next__]:
                                 nextp = os.path.join(self.dir,f"{log[self.__next__]}.log")
@@ -204,7 +237,7 @@ class MJournal:
                                     os.unlink(p)
                                     change = True
                                     continue
-                else: # subdir.
+                elif os.path.isdir(p):
                     logp = os.path.join(self.dir,f"{name}.log")
                     if not os.path.isfile(logp):
                         if MLogger.isWarning():
@@ -214,45 +247,70 @@ class MJournal:
                         continue
 
     def __str__(self) -> str:
-        """ End of the list to head. """
+        """ Show changes in undo order, current, then redo order. """
         if self.isempty():
             return ">> No changes <<"
+        # newbase
         with open(self.__currentPath, "r") as f:
             current = json.load(f)
+        cur = current
+        undo=0
+        while cur:
+            undo += 1
+            with open(os.path.join(self.dir,f"{cur}.log"), "r") as f:
+                cur = json.load(f)
+            log = cur
+            cur = cur[self.__previous__]
+        s=""
+        redo=0
+        while log:
+            label=[]
+            prev = log[self.__previous__]
+            if prev: # don't show head.
+                ths = log[self.__this__]
+                if ths == current and undo != 1:
+                    raise Exception(f"start {undo} {redo}")
+                if log[self.__change__][MJournalChange.__type__] == "MJournalRebase":
+                    label.append("BASE")                    
+                elif undo:
+                    label.append("UNDO "+str(undo))
+                else:
+                    label.append("REDO "+str(redo))
+                s+="\n"
+                if label:
+                    label=(",".join(label))
+                    s+=f"{label}"
+                if log[self.__change__]:
+                  s+=f"\n{json.dumps(log[self.__change__],indent=2)}"
+            if undo:
+                undo = undo - 1
+                if not undo:
+                    redo = 1
+            else:
+                redo = redo + 1
+            if log[self.__next__]:
+                with open(os.path.join(self.dir,f"{log[self.__next__]}.log"), "r") as f:
+                    log = json.load(f)
+            else:
+                log = None
+        return s
+
+    def getChanges(self) -> list:
+        """ Get changes in order. """
+        retval = []
+        if self.isempty():
+            return retval
         with open(self.__headPath, "r") as f:
             uuid = json.load(f)
         __headPath = os.path.join(self.dir,f"{uuid}.log")
         with open(__headPath, "r") as f:
-            log = json.load(f)     
+            log = json.load(f)
+            retval.append(log)
         while log[self.__next__]:
             with open(os.path.join(self.dir,f"{log[self.__next__]}.log"), "r") as f:
                 log = json.load(f)
-        s=">>>>\n"
-        while log:
-            label=[]
-            prev = log[self.__previous__]
-            if not prev:
-                label.append("head")
-                prev = "None"
-            nxt = log[self.__next__]
-            if not nxt:
-                label.append("tail")
-                nxt = "None"
-            ths = log[self.__this__]
-            if ths == current:
-                label.append("current")
-            if label:
-                label="("+(",".join(label))+")"
-            else:
-                label=""
-            s+=f"--==--\nprev={prev}\nthis{label}={ths}\nnext={nxt}\n"
-            s+=f"  {log[self.__change__]}\n"
-            if log[self.__previous__]:
-                with open(os.path.join(self.dir,f"{log[self.__previous__]}.log"), "r") as f:
-                    log = json.load(f)
-            else:
-                log = None
-        return s+"<<<<\n"
+                retval.append(log)
+        return retval
 
     def head(self) -> str:
         """ UUID for the first change. """
@@ -318,7 +376,6 @@ class MJournal:
         if n:
             nextlogfile = os.path.join(self.dir,f"{n}.log")
             with open(nextlogfile, "r") as f:
-                print(nextlogfile)
                 nextlog = json.load(f)
             return MJournalChange.fromJson(nextlog[self.__change__],self.changeFactoryClass)
         return None
@@ -397,7 +454,7 @@ class MJournal:
 
     def delete(self) -> str:
         """
-        Undo the current change and delete it, return path to the new current change.
+        Delete the current change, return path to the new current change.
         """
         if self.atHead():
             # No change to delete at the head of the journal.
@@ -419,8 +476,8 @@ class MJournal:
             with open(nextfile, "w") as f:
                 json.dump(nextlog,f)
         os.unlink(os.path.join(self.dir,f"{uuid}.log"))
-        shutil.rmtree(os.path.join(self.dir,uuid))
-        self.down()
+        shutil.rmtree(os.path.join(self.dir,uuid),ignore_errors=True)
+        self.up()
         return os.path.join(self.dir,self.log[self.__this__])
 
     def prune(self):

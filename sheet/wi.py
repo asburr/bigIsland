@@ -22,20 +22,22 @@ try:
     import wx
     import wx.grid
 except Exception:
+    import sys
     print("Failed to import wx, install instructions:")
     print("sudo apt-get install -y libsdl2-2.0-0")
     print("sudo apt-get install libgtk-3-dev")
     print("pip3 install -U -f https://extras.wxpython.org/wxPython4/extras/linux/gtk3/ubuntu-18.04 wxPython")
-    exit(1)
+    sys.exit(1)
 from magpie.src.musage import MUsage
 from magpie.src.mudp import MUDP, MUDPBuildMsg
 from magpie.src.mworksheets import MCmd
 from sheet.QueryParams import QueryParams
 from sheet.Grid import WiGrid
-from hallelujah.hallelujah import Hallelujah
+from hallelujah.worksheet_manager import WorksheetManager
 
 
 class WiSampleGrid(wx.Frame):
+    """ WiSampleGrid """
     def __init__(self, title: str, remoteAddr: (str,int), mudp: MUDP):
         wx.Frame.__init__(self, parent=None, title=title)
         boxSizer = wx.BoxSizer(wx.VERTICAL)
@@ -62,11 +64,13 @@ class WiSampleGrid(wx.Frame):
         self.Bind(wx.EVT_CLOSE, self.onClose)
 
     def onClose(self, event):
+        """ onClose - """
         self.timer.Stop()
         self.mudp.cancelRequestId(self.requestId)
         self.Destroy()
 
     def timerTick(self):
+        """ timerTick - """
         eom = False
         updates = False
         timeout = False
@@ -100,42 +104,59 @@ class WiSampleGrid(wx.Frame):
                 self.label.SetValue("%d rows (complete response)"%len(self.rows))
     
 class WiWS(wx.Frame):
+    """ WiWS - """
     def __init__(self, debug: bool, wsdir: str, congregation: (str,int)):
         """
         Connects to the DB and reads (hj) the worksheets, local differences are
         "new" changes and the database version of the worksheet is the current
         version.
         """
-        self.wsn = None
-        self.hj = Hallelujah(
+        self.hj = WorksheetManager(
                 congregationHost=congregation[0],
                 congregationPort=congregation[1],
                 worksheetdir=wsdir
             )
         self.ws = self.hj.worksheets
+        change = self.ws.changes.currentChange()
+        if change:
+            self.wsn = getattr(change,"wsuuid",None)
+        else:
+            self.wsn = None
         wx.Frame.__init__(self, parent=None, title="Worksheet")
         self.congregation = congregation
         boxSizer = wx.BoxSizer(wx.VERTICAL)
         self.panel = wx.Panel(self)
         self.cmd = None
+
+        self.showButton = wx.Button(self.panel, label="CHANGE HISTORY")
+        self.showButton.Bind(wx.EVT_BUTTON, self.on_showButton)
+        boxSizer.Add(self.showButton, proportion=0, flag=wx.EXPAND)
+
+        boxHorizontal = wx.BoxSizer(wx.HORIZONTAL)
+        boxSizer.Add(boxHorizontal, proportion=0, flag=wx.EXPAND)
         self.currentChange = wx.StaticText(self.panel,label="")
-        boxSizer.Add(self.currentChange, proportion=0, flag=wx.EXPAND)
-        self.ws_selectionDEL = wx.ComboBox(self.panel, choices=[])
-        self.ws_selectionDEL.Bind(wx.EVT_COMBOBOX, self.ws_selectedDEL)
-        boxSizer.Add(self.ws_selectionDEL, proportion=0, flag=wx.EXPAND)
-        self.ws_selectionREDO = wx.ComboBox(self.panel, choices=[])
-        self.ws_selectionREDO.Bind(wx.EVT_COMBOBOX, self.ws_selectedREDO)
-        boxSizer.Add(self.ws_selectionREDO, proportion=0, flag=wx.EXPAND)
-        self.ws_selectionUNDO = wx.ComboBox(self.panel, choices=[])
-        self.ws_selectionUNDO.Bind(wx.EVT_COMBOBOX, self.ws_selectedUNDO)
-        boxSizer.Add(self.ws_selectionUNDO, proportion=0, flag=wx.EXPAND)
+        boxHorizontal.Add(self.currentChange, proportion=0, flag=wx.EXPAND)
+        self.undoButton = wx.Button(self.panel, label="UNDO")
+        self.undoButton.Bind(wx.EVT_BUTTON, self.on_undoButton)
+        boxHorizontal.Add(self.undoButton, proportion=0, flag=wx.EXPAND)
+
+        boxHorizontal = wx.BoxSizer(wx.HORIZONTAL)
+        boxSizer.Add(boxHorizontal, proportion=0, flag=wx.EXPAND)
+        self.nextChange = wx.StaticText(self.panel,label="")
+        boxHorizontal.Add(self.nextChange, proportion=0, flag=wx.EXPAND)
+        self.redoButton = wx.Button(self.panel, label="REDO")
+        self.redoButton.Bind(wx.EVT_BUTTON, self.on_redoButton)
+        boxHorizontal.Add(self.redoButton, proportion=0, flag=wx.EXPAND)
+        self.delButton = wx.Button(self.panel, label="DEL")
+        self.delButton.Bind(wx.EVT_BUTTON, self.on_delButton)
+        boxHorizontal.Add(self.delButton, proportion=0, flag=wx.EXPAND)
+
         self.ws_selection = wx.ComboBox(self.panel, choices=[])
         # Changing choices:
         #   self.ws_selection.SetItems(wsns)
         #   self.ws_selection.SetValue(current_value)
         self.ws_selection.Bind(wx.EVT_COMBOBOX, self.ws_selectedNEW)
         boxSizer.Add(self.ws_selection, proportion=0, flag=wx.EXPAND)
-        self.refreshSelection()
         self.addButton = wx.Button(self.panel, label="ADD CMD")
         self.addButton.Bind(wx.EVT_BUTTON, self.on_addcmd)
         self.addButton.Hide()
@@ -147,48 +168,78 @@ class WiWS(wx.Frame):
         self.panel.Layout()
         self.Layout()
         self.Show()
+        self.refreshSelection()
         self.usage = MUsage()
 
     def refreshSelection(self):
-        print("refreshSelection")
+        """ refreshSelection - """
         change = self.ws.changes.currentChange()
-        self.currentChange.SetLabel(str(change))
         if change:
-            changes=[str(change)]
+            self.wsn = change.__dict__.get("wsuuid",None)
+            self.currentChange.SetLabel(str(change))
         else:
-            changes=[]
-        self.ws_selectionUNDO.SetItems(changes)
-        self.ws_selectionUNDO.SetValue("UNDO")
-        print("refreshSelection A")
+            self.wsn = None
+            self.currentChange.SetLabel("no change")
+        if not change or not change.msgType():
+            self.undoButton.Disable()
+        else:
+            self.undoButton.Enable()
         change = self.ws.changes.nextChange()
         if change:
-            changes=[str(change)]
+            self.delButton.Enable()
+            self.redoButton.Enable()
+            self.nextChange.SetLabel(str(change))
         else:
-            changes=[]
-        self.ws_selectionDEL.SetItems(changes)
-        self.ws_selectionDEL.SetValue("DEL")
-        self.ws_selectionREDO.SetItems(changes)
-        self.ws_selectionREDO.SetValue("REDO")
-        print("refreshSelection B")
+            self.delButton.Disable()
+            self.redoButton.Disable()
+            self.nextChange.SetLabel("")
         wsns = self.ws.titles()
         wsns.append("new worksheet")
         self.ws_selection.SetItems(wsns)
-        self.ws_selection.SetValue("NEW")
+        self.ws_selection.SetValue("WORKSHEET : "+str(self.ws.title(self.wsn)))
         if self.wsn:
             self.addButton.Show()
             self.grid.update(self.titles, self.ws.inputCmdOutput(self.wsn))
             self.panel.Layout()
             self.Layout()
             self.Show()
-        print("refreshSelection X")
+
+    def on_showButton(self, event):
+        """ onshowButton - """
+        changes = str(self.ws.changes)
+        QueryParams(parent=self, title="Change history",
+             style=wx.OK, params={"changes": "str"}, selected={"changes": changes}, verify=None, sample=None, descriptions={}, on_close=None, getOptions=None)
+        event.Skip(False)
+
+    def on_undoButton(self, event):
+        """ on_undoButton - """
+        change = self.hj.worksheets.changes.currentChange()
+        if not self.hj.worksheets.undo():
+            wx.MessageBox("Nothing to undo","",wx.OK, self)
+            event.Skip(False)
+            return
+        change = change.reversed()
+        error = self.hj.push(change)
+        if error:
+            wx.MessageBox(error,"",wx.OK, self)
+            error = self.hj.worksheets.redo()
+            if error:
+                wx.MessageBox(f"Failed to undo {error}","",wx.OK, self)
+        wsn = self.hj.worksheets.wsnCurrentChange()
+        if wsn:
+            self.wsn = wsn
+        self.refreshSelection()
+        event.Skip(False)
 
     def on_addcmd(self, event):
+        """ on_addcmd - """
         wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
         QueryParams(parent=self, title="New command for " + wsn,
              style=wx.OK | wx.NO, params={"select command": self.ws.cmd_titles()}, selected={}, verify=None, sample=None, descriptions=self.ws.cmd_descriptions(), on_close=self.wsaddcmd_close, getOptions=self.ws.paramsCmd)
         event.Skip(False)
 
     def wsaddcmd_close(self, event):
+        """ wsaddcmd_close - """
         wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
         qp = event.GetEventObject()
         if qp.res != wx.OK:
@@ -204,11 +255,13 @@ class WiWS(wx.Frame):
         event.Skip(False)
 
     def wsaddedcmd_verify(self, qp: QueryParams) -> str:
+        """ wsaddedcmd_verify - """
         wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
         selected = qp.getSelected()
         return self.ws.updateCmd(wsn=wsn, selected=selected)
 
     def wsaddedcmd_close(self, event):
+        """ wsaddedcmd_close - """
         self.wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
         qp = event.GetEventObject()
         if qp.res != wx.OK:
@@ -228,31 +281,24 @@ class WiWS(wx.Frame):
         self.Show()
         event.Skip(False)
 
-    def ws_selectedDEL(self, event):
-        error = self.hj.worksheets.redo()
-        if len(error) > 0:
-            wx.MessageBox(error,"",wx.OK, self)
-            event.Skip(False)
-            return
+    def on_delButton(self, event):
+        """ on_delButton - """
+        self.hj.worksheets.deleteNextChange()
         self.refreshSelection()
         event.Skip(False)
 
-    def ws_selectedREDO(self, event):
+    def on_redoButton(self, event):
         change = self.hj.worksheets.changes.nextChange()
         error = self.hj.worksheets.redo()
         if error:
             wx.MessageBox(error,"",wx.OK, self)
             event.Skip(False)
             return
-        if self.hj.dbworksheets_state:
-            print(self.hj.dbworksheets_state)
         error = self.hj.push(change)
         if error:
-            print("Error"+error+"*")
             wx.MessageBox(error,"",wx.OK, self)
             if not self.hj.worksheets.undo():
                 wx.MessageBox("Failed to undo","",wx.OK, self)
-            event.Skip(False)
         wsn = self.hj.worksheets.wsnCurrentChange()
         if wsn:
             self.wsn = wsn
@@ -288,7 +334,7 @@ class WiWS(wx.Frame):
         if not self.wsn:
             event.Skip()
             return
-        error = self.ws.addSheet(uuid.uuid4(),self.wsn)
+        error = self.ws.updateSheet(uuid=str(uuid.uuid4()),oldtitle=None,title=self.wsn)
         if error:
             wx.MessageBox(
                 "Faild: "+error,
@@ -336,7 +382,7 @@ class WiWS(wx.Frame):
         event.Skip(False)
 
     def ws_close(self, event) -> None:
-        """ Close edit command window. """
+        """ ws_close - close edit command window. """
         self.wsn = self.ws.uuidAtIdx(self.ws_selection.GetSelection())
         qp = event.GetEventObject()
         if qp.res == wx.OK:

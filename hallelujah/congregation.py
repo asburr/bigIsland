@@ -436,10 +436,10 @@ class Congregation(RootHJ):
         p = cmd["params"]
         uuid = p["cmdUuid"]
         (useroldparams, useroldselected, userolddesc) = self.ws.paramsCmd(
-            cmd=cmd["oldcmd"], at=p["cmd"]
+            cmd=p["oldcmd"], at=cmd["cmd"]
         )
         (usernewparams, usernewselected, usernewdesc) = self.ws.paramsCmd(
-            cmd=cmd["newcmd"], at=p["cmd"]
+            cmd=p["newcmd"], at=cmd["cmd"]
         )
         error = self.ws.updateCmd(
             wsn=self.ws.getCmdUuidWS(uuid), cmdUuid=uuid,
