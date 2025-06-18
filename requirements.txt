@@ -89,7 +89,7 @@ parso @ file:///opt/conda/conda-bld/parso_1641458642106/work
 pathspec @ file:///croot/pathspec_1674681560568/work
 pexpect @ file:///tmp/build/80754af9/pexpect_1605563209008/work
 pickleshare @ file:///tmp/build/80754af9/pickleshare_1606932040724/work
-Pillow==10.1.0
+Pillow==10.3.0
 platformdirs @ file:///croot/platformdirs_1692205439124/work
 pluggy @ file:///tmp/build/80754af9/pluggy_1648024709248/work
 ply==3.11
