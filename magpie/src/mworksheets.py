@@ -1067,7 +1067,7 @@ class MWorksheets:
             oldselected = {}
             if cmd:
                 (params, oldselected, description) = self.paramsCmd(cmd,at=None)
-            error = self.updateCmd(wsc.ws,wsc.cmduuid,wsc.cmdname,oldselected,wsc.newselected,changelog=False)
+            error = self.updateCmd(wsc.wsuuid,wsc.cmduuid,wsc.cmdname,oldselected,wsc.newselected,changelog=False)
             if error:
                 return error
         elif type(wsc) == MWorksheetsSheetChange:

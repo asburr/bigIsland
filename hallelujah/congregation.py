@@ -191,6 +191,19 @@ class Congregation(RootHJ):
  cluster. The cluster protects knowledge of the commands. Commands that
  were running on the failed host, remain dormant until a Hallelujah restarts
  them.
+ 
+ Congregation support the commands in the worksheet.
+ TODO; An updated is a new worksheet and new commands. Update is sent to the
+ summit congregation and cascades throughout the database. Update has a tarfile
+ that contains the new schema and new commands.
+ TODO; The update process occurs when a congregation connects.
+ TODO: Change sheetReq/Cfm to updateReq/Cfm.
+ Updates are backward compatible, existing commands continue to run.
+ 
+ Command Lifecycle:
+     1. CmdReq sent to congegation.
+     2. Congregation creates a Hallelu process.
+     3. Hallelu and cmds are not yet connected?
     """
 
     def __init__(self, port: int, processdir: str, connectaddr: (str, int)):
@@ -221,6 +234,7 @@ class Congregation(RootHJ):
         if not os.path.exists(p):
             os.mkdir(p)
         self.ws = MWorksheets(p)
+        print(f"schema={self.ws.schema}")
 
     def ConReq(self, key: MUDPKey, cmd: dict):
         """
@@ -385,6 +399,7 @@ class Congregation(RootHJ):
         if updateHere:
             p = cmd["params"]
             self.ws.changeSchema(p["schema"])
+            print(f"change schema={self.ws.schema}")
         self.sendCfm(req=cmd, title="_schCfm_", params=params)
 
     def _redirectingReq(self, key: MUDPKey, cmd: dict, check) -> (bool, dict):
@@ -438,6 +453,7 @@ class Congregation(RootHJ):
         (useroldparams, useroldselected, userolddesc) = self.ws.paramsCmd(
             cmd=p["oldcmd"], at=cmd["cmd"]
         )
+        print(f"schema={self.ws.schema}")
         (usernewparams, usernewselected, usernewdesc) = self.ws.paramsCmd(
             cmd=p["newcmd"], at=cmd["cmd"]
         )

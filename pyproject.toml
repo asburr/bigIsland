@@ -1,0 +1,19 @@
+[project]
+name="big-island"
+description="Big Island is (1) Magpie utilities; (2) Hallelujah parallel database; (3) Discovery is automatic data analysis and Hallelujah schema generation; (4) Sheet is a data viewer for Hallelujah."
+version="0.0.1"
+dependencies = [
+  "ijson==3.3.0",
+  "wxPython==4.2.1",
+]
+readme={file="README.md", content-type="text/markdown"}
+license = "GPL-3.0-or-later"
+keywords = ["data"]
+classifiers = [
+  # How mature is this project? Common values are
+  #   3 - Alpha
+  #   4 - Beta
+  #   5 - Production/Stable
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3.10",
+]

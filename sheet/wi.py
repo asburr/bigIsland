@@ -123,6 +123,9 @@ class WiWS(wx.Frame):
         else:
             self.wsn = None
         wx.Frame.__init__(self, parent=None, title="Worksheet")
+        icon = wx.EmptyIcon()
+        icon.CopyFromBitmap(wx.Bitmap("bigislabn.png", wx.BITMAP_TYPE_ANY))
+        self.SetIcon(icon)
         self.congregation = congregation
         boxSizer = wx.BoxSizer(wx.VERTICAL)
         self.panel = wx.Panel(self)

@@ -10,7 +10,7 @@
 # 
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
 #
-from cmd import Cmd
+from hallelujah.cmds.cmd import Cmd
 import os.path
 import json
 import re
@@ -20,21 +20,25 @@ import posix
 import traceback
 
 
-# ProcessFile exists while a file is being processed.
-# The name of the ProcessFile includes the name of the file being
-# processed, starts with the prefix and followed by the file name.
-# i.e. processfile = <prefix><filename>
 class ProcessFile():
+    """
+    ProcessFile exists while a file is being processed.
+    The name of the ProcessFile includes the name of the file being
+    processed, starts with the prefix and followed by the file name.
+    i.e. processfile = <prefix><filename>
+    """
     processFilePrefix = ".processfile_"
     processFilePrefixLen = len(".processfile_")
 
-    # Create a processFile for filePath.
-    # Reads processFile when it already exists, otherwise creates a
-    # new processFile using atomicWrite() which prevents two processes
-    # creating the same file. fileSync is False when another process
-    # created the processFile first, and ProcessFile should not be
-    # used in this case.
     def __init__(self, processFileDir: str, filePath: str):
+        """
+        Create a processFile for filePath.
+        Reads processFile when it already exists, otherwise creates a
+        new processFile using atomicWrite() which prevents two processes
+        creating the same file. fileSync is False when another process
+        created the processFile first, and ProcessFile should not be
+        used in this case.
+        """
         self.processFilePath = processFilePath = os.path.join(
             processFileDir,
             ProcessFile.processFilePrefix+os.path.basename(filePath)
@@ -61,12 +65,14 @@ class ProcessFile():
             return "%d,%s,%s"%(self.fileSync,self.uuid,self.path)
         return "%d"%self.fileSync
 
-    # factory() creates ProcessFile object from an existing file (dirEntry).
-    # Return False when entry is not a the name of a process file.
-    # Return True and None when process file expired/no-associated-file and dirEntry is deleted.
-    # Return True and ProcessFile when process file exists/was-created.
     @staticmethod
     def factory(pfentry: posix.DirEntry, filePath: str) -> (bool, "ProcessFile"):
+        """
+        factory() creates ProcessFile object from an existing file (dirEntry).
+        Return False when entry is not a the name of a process file.
+        Return True and None when process file expired/no-associated-file and dirEntry is deleted.
+        Return True and ProcessFile when process file exists/was-created.
+        """
         if not pfentry.name.startswith(ProcessFile.processFilePrefix):
             return False, None
         if len(pfentry.name) == ProcessFile.processFilePrefixLen:
@@ -90,10 +96,12 @@ class ProcessFile():
     def fileToProcessFile(filename: str) -> str:
         return ProcessFile.processFilePrefix+filename
 
-    # Return True when the processfile on disk has the same UUID
-    # as the processfile in memory, i.e. this process owns the
-    # processfile on disk.
     def ownFile(self) -> bool:
+        """
+        Return True when the processfile on disk has the same UUID
+        as the processfile in memory, i.e. this process owns the
+        processfile on disk.
+        """
         with open(self.processFilePath,"r") as f:
             line = next(f)
             if len(line) == 0:
@@ -105,10 +113,10 @@ class ProcessFile():
         os.remove(self.processFilePath)
         self.processFilePath = None
 
-    # Return True when this FILES has the same processfile, returns False
-    # when another FILES has taken control of the processFile.
     def atomicWrite(self) -> bool:
         """
+        Return True when this FILES has the same processfile, returns False
+        when another FILES has taken control of the processFile.
         atomicWrite handles the problem of two FILES at the same time want to own
         the same file, and both writing the same process-file at the same
         time.
@@ -174,13 +182,13 @@ class ProcessFile():
 
 class Files(Cmd):
     """
- Files: uses os.path.getmtime(), it returns an accurate timestamp for the
- last time a directory was changed. Initially, Files scans all of the
- directories, and caches in memory the path to the file that have not
- been processed before. Next execution of Files, looks for changes in
- the known directories. A different directory modified time, requires a
- rescan of that directory looking for the new or removed files, and
- the in memory cache is updated.
+    Files: uses os.path.getmtime(), it returns an accurate timestamp for the
+    last time a directory was changed. Initially, Files scans all of the
+    directories, and caches in memory the path to the file that have not
+    been processed before. Next execution of Files, looks for changes in
+    the known directories. A different directory modified time, requires a
+    rescan of that directory looking for the new or removed files, and
+    the in memory cache is updated.
     """
     def __init__(self, cmd: dict):
         super().__init__()
@@ -279,10 +287,12 @@ class Files(Cmd):
                         return ret
         return ret
 
-    # Avoid re-scanning a directory that has not changed by tracking
-    # directory's modification time in path_mtimes, which changes
-    # when directory changes i.e. something added/removed in the directory.
     def execute(self) -> bool:
+        """
+        Avoid re-scanning a directory that has not changed by tracking
+        directory's modification time in path_mtimes, which changes
+        when directory changes i.e. something added/removed in the directory.
+        """
         if len(self.path_mtimes) == 0:
             self.srtPath()
             self.initialDirScan()
@@ -416,90 +426,3 @@ class Files(Cmd):
         self.path_mtimes = path_mtimes
         for k,v in tmp.items():
             self.path_mtimes[k] = v
-
-    @staticmethod
-    def runTestcase(i:int, tc: list) -> bool:
-        if tc[0] != i:
-            print(str(i)+" End of testcases for this cycle")
-            return False
-        print(str(i)+" "+str(tc))
-        if tc[1] == "mkdir":
-            os.mkdir(tc[2])
-        elif tc[1] == "rmdir":
-            os.rmdir(tc[2])
-        elif tc[1] == "purgeDir":
-            if os.path.isdir(tc[2]):
-                Files.removeNest(tc[2])
-        elif tc[1] == "touch":
-            with open(tc[2],"w"):
-                pass
-        elif tc[1] == "rm":
-            os.remove(tc[2])
-        else:
-            raise Exception("Unexpected cmd #"+str(i)+" "+str(tc[1]))
-        return True
-    
-    @staticmethod
-    def testJahCallBack(ip:str, port:int, requestId:int, content:dict) -> None:
-        print(str(ip)+" "+str(port)+" "+str(requestId)+" "+str(content))
-
-    @staticmethod
-    def testCmd() -> dict:
-        return {
-            "uuid": "25f30f46-cd0a-46f2-812e-2e527e78a059",
-            "version": "1",
-            "cmd": "files",
-            "params": {
-                "root": "test",
-                "path": {
-                    "path": "test/filestesting_tmp",
-                    "depth": 1,
-                    "readonly": "test/filestesting_tmp_PF",
-                    "feeds": [
-                        {"feed": "test.pcap", "regex": ".*\\.pcap"},
-                        {"feed": "test.new", "regex": ".*"}
-                    ]
-                }
-            }
-        }
-
-    testcases = [
-            [-1, "purgeDir", "test/filestesting_tmp" ],
-            [-1, "purgeDir", "test/filestesting_tmp_PF" ],
-            [0, "mkdir", "test/filestesting_tmp" ],
-            [0, "mkdir", "test/filestesting_tmp_PF" ],
-            [1, "touch", "test/filestesting_tmp/test1.pcap" ],
-            [1, "touch", "test/filestesting_tmp/test1.tmp" ],
-            [2, "touch", "test/filestesting_tmp/test2.pcap" ],
-            [2, "touch", "test/filestesting_tmp/test2.tmp" ],
-            [3, "touch", "test/filestesting_tmp/test3.pcap" ],
-            [3, "touch", "test/filestesting_tmp/test3.tmp" ],
-            [4, "rm", "test/filestesting_tmp/test1.pcap" ],
-            [4, "rm", "test/filestesting_tmp/test1.tmp" ],
-            [4, "rm", "test/filestesting_tmp/test3.pcap" ],
-            [4, "rm", "test/filestesting_tmp/test3.tmp" ],
-            [5, "rm", "test/filestesting_tmp/test2.tmp" ],
-            [5, "rm", "test/filestesting_tmp/test2.pcap" ],
-            [6, "rmdir", "test/filestesting_tmp" ],
-            [-1]
-        ]
-
-    @staticmethod
-    def main():
-        tc_i = 0
-        while Files.runTestcase(-1,Files.testcases[tc_i]):
-            tc_i += 1
-        files = Files(Files.testCmd())
-        for i in range(10):
-            while Files.runTestcase(i,Files.testcases[tc_i]):
-                tc_i += 1
-            files.execute()
-            print("SAMPLE:")
-            for (b,d) in files.sample(feedName=None,n=10):
-                print(str(b)+" "+str(d))
-            print("Disco:"+files.disco.dumps())
-            time.sleep(0.5)
-        
-
-if __name__ == "__main__":
-    Files.main()

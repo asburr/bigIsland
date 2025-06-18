@@ -13,16 +13,19 @@
 from hallelujah.root import RootHJC
 from hallelujah.cmds.files import Files
 from hallelujah.cmds.test import Test
+from hallelujah.cmds.loadf import Loadf
 from magpie.src.mlogger import MLogger
 
 class Jah(RootHJC):
     """
- Jah is started by Congregation, there are one or more Jah for a command. It
- coordinates a partition of processing and data storage.
+ Jah is started by Congregation at the request of a Hallelu.
+ There are one or more Jah per Hallelu (command).
+ Jah is a partition of data and/or processing.
     """
     cmds = {
         "test": Test,
-        "files": Files
+        "files": Files,
+        "Loadf": Loadf,
     }
 
     @staticmethod

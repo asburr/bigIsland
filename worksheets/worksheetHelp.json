@@ -36,32 +36,39 @@
                 }
             }
         },
-        "archive": {
-            "type": "composite", "default": null,
-            "desc": "Archive processed files",
-            "path": {
-                "type": "path",
-                "desc": "Successful loading of the file is moved to this location"
-            }, "dateSubDir": {
-                "type": "str", "default": "day",
-                "choice": ["day", "month", "year", "none"],
-                "desc": "Archive subdir by date of <path>/<dateSubDir>/[<fileSubDir>/]<file>"
-            }, "purge": {
-                "type": "int", "default": 432000,
-                "desc": "Age of archive file in seconds after which archived file is deleted"
-            }, "diskUsage": {
-                "type": "int", "default": 70,
-                "desc": "Percentage usage of the file system where the archive is located, at or above this usage triggers the oldest archived files to be deleted"
-            }, "onError": {
-                "type": "path", "default": null,
-                "desc": "Failure to load whole or part of a file, this file is moved to this archive. Default is to delete the file that's in error when not readonly"
-            }
+        "onProcessed": {
+            "type": "path", "default": null,
+            "desc": "Successful loaded file is moved to this location"
+        },
+        "onError": {
+            "type": "path", "default": null,
+            "desc": "Unsucceddful loaded file is moved to this location. Cannot be used for readonly path. The default is to delete a unsuccessful file."
+        }
+    },
+    "archive": {
+        "type": "composite",
+        "desc": "archive files in an incoming directory to an archive directory",
+        "inPath": {
+            "type": "path",
+            "desc": "File for this incoming directory are moved into the archive"
+        }, "archiveRootPath": {
+            "type": "path",
+            "desc": "The root directory for the archive subdirs."
+        }, "dateSubDir": {
+            "type": "str", "default": "day",
+            "choice": ["day", "month", "year", "none"],
+            "desc": "Archive subdir by date of <root>/<dateSubDir>/[<fileSubDir>]/<file>"
+        }, "purge": {
+            "type": "int", "default": 432000,
+            "desc": "Age of archive file in seconds after which archived file is deleted"
+        }, "diskUsage": {
+            "type": "int", "default": 70,
+            "desc": "Percentage usage of the file system where the archive is located, at or above this usage triggers the oldest archived files to be deleted"
         }
     },
     "loadf": {
         "type": "composite",
         "desc": "Loads data from a file",
-        "eg": "{files: <feed> f:<feed> fstats:<feed> s:{ tshark: false csv: 1 file:{ f: <feed> oracleTable: <table> csvRowCount: 1 } }",
         "snapshot": {
             "type": "bool", "default": false,
             "desc": "True when file contains a complete snapshot. Internally, this adds the snapshot indication to the feed, indicating the start and end of each snapshot. From a user's perspective, a join is paused until the first snapshot is received, subsequent snapshots are received peacemeal ."
@@ -581,7 +588,7 @@
         "desc": "Address of the Jah created from the _JahReq_"
     }, "_streamReq_": {
         "type": "composite",
-        "desc": "_streamReq_ is sent to Hallelu, from other Hallelu or User, to start a stream of data from the Hallelu's Jah. Same Message is forwarded to each Jah, to start stream processing which runs contineously building dataCfm messages so they are ready to be transmitted to the Receiver as soon _DatReq_.",
+        "desc": "_streamReq_ is sent to Hallelu, from other Hallelu or User, to start a stream of data from the Jah. Same Message is forwarded to each Jah, to start stream processing which runs contineously building dataCfm messages so they are ready to be transmitted to the Receiver as soon _DatReq_.",
         "streamUuid": {
             "type": "str",
             "desc": "Unique ID for this stream request"
