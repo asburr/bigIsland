@@ -3,7 +3,7 @@
     "desc": "Hallelujah commands",
     "files": {
         "type": "composite",
-        "desc": "FILES generates a process-file for a previously unprocessed file.\nA process-file has the name '.process_<filename>', and the format:\n{\n'uuid': str, # Unique ID for this process-file\n'path': str, # Full path to the file that is to be processed.\n'found': int, # Timestamp of when process-file was first created.\n'processing': int, # Timestamp set by FILE when sending path to a command, and also updated by command while processing.\n'processed': int # Timestamp when processing is done and complete.\n}.\nIn the configuration, a regex is used to associated a file with a feed. process-file is created in the same directory as the file being processed. Except, when the directory is read-only, in this case the configuration has a reference to a writable file system (see 'readonly') and that is where the process-file is created.\n Commands that consume the process-file shall also process the contents of the associated file that is found at the 'path'.  While the command is processing the contents of the file, it is periodically updating process-file with the current timesamp in the 'processing' field.\nPeriodically, FILES checks for hung processing. A hung process is when the 'processing' timestamp is more than 10 minutes old. It is assumed that hung processing shall not recover, and the process-file is recreated with a new UUID. If a hung processing should recover and resume processing the file, it will find a different UUID in the process-file, at which point it shall shutdown, stop processing the file, and make no changes to the process-file.\nPeriodically FILES checks for processing that has finished. Finished is when the 'processed' field is not zero. FILES has three choices at the finish:\n1/ When read-only file sytems, the process-file continues to exist until something else removes the actual file; 2/ When archiving, the processed file is moved to the archive, and the process-file is removed; 3/ Otherwise, the processed file and process-file are erased.",
+        "desc": "FILES finds files that have not been processed in a directory. Creates a process-file in the same directory for an unprocessed file.\process-file has the name '.process_<filename>', and the format:\n{\n'uuid': str, # Unique ID for this process-file\n'path': str, # Full path to the file that is to be processed.\n'found': int, # Timestamp of when process-file was first created.\n'processing': int, # Timestamp set by FILE when sending path to a command, and also updated by command while processing.\n'processed': int # Timestamp when processing is done and complete.\n}.\nIn the configuration, a regex is used to associated a file with a feed. process-file is created in the same directory as the file being processed. Except, when the directory is read-only, in this case the configuration has a reference to a writable file system (see 'readonly') and that is where the process-file is created.\n Commands that consume the process-file shall also process the contents of the associated file that is found at the 'path'.  While the command is processing the contents of the file, it is periodically updating process-file with the current timesamp in the 'processing' field.\nPeriodically, FILES checks for hung processing. A hung process is when the 'processing' timestamp is more than 10 minutes old. It is assumed that hung processing shall not recover, and the process-file is recreated with a new UUID. If a hung processing should recover and resume processing the file, it will find a different UUID in the process-file, at which point it shall shutdown, stop processing the file, and make no changes to the process-file.\nPeriodically FILES checks for processing that has finished. Finished is when the 'processed' field is not zero. FILES has three choices at the finish:\n1/ When read-only file sytems, the process-file continues to exist until something else removes the actual file; 2/ When archiving, the processed file is moved to the archive, and the process-file is removed; 3/ Otherwise, the processed file and process-file are erased.",
         "eg": "{p: { p:<path> d:1 ro:<path> fs:[ { f:<fileo> re:*\\.csv } ] a:{ p:<path> dateSubDir:day purge:60 diskUsage:70 onError:<path> } } }",
         "root": {
             "type": "str", "key": true,
@@ -15,8 +15,8 @@
                  "type": "path", "default": ".",
                  "desc": "Path to load files from. Default is current directory."
             }, "order": {
-                 "type": "str", "default": "mnewest",
-                 "choice": ["mnewest", "moldest"],
+                 "type": "str", "default": "newest",
+                 "choice": ["newest", "oldest"],
                  "desc": "Order of file name retrieval"
             }, "depth": {
                 "type": "int", "default": 0,
@@ -42,22 +42,36 @@
         },
         "onError": {
             "type": "path", "default": null,
-            "desc": "Unsucceddful loaded file is moved to this location. Cannot be used for readonly path. The default is to delete a unsuccessful file."
+            "desc": "Unsuccessfully loaded file is moved to this location. Cannot be used for readonly path. The default is to delete a unsuccessful file."
         }
     },
     "archive": {
         "type": "composite",
-        "desc": "archive files in an incoming directory to an archive directory",
+        "desc": "archive files in an incoming directory to an archive directory with a default subdir structure of root/YYYY/MM/DD/file. The subdir structure may be changed using second, minute, hour, day, month, year.",
         "inPath": {
             "type": "path",
             "desc": "File for this incoming directory are moved into the archive"
         }, "archiveRootPath": {
             "type": "path",
             "desc": "The root directory for the archive subdirs."
-        }, "dateSubDir": {
-            "type": "str", "default": "day",
-            "choice": ["day", "month", "year", "none"],
-            "desc": "Archive subdir by date of <root>/<dateSubDir>/[<fileSubDir>]/<file>"
+        }, "second": {
+            "type": "bool", "default": false,
+            "desc": "Archive subdir by second in mfile"
+        }, "minute": {
+            "type": "bool", "default": false,
+            "desc": "Archive subdir by minute in mfile"
+        }, "hour": {
+            "type": "bool", "default": false,
+            "desc": "Archive subdir by hour in mfile"
+        }, "day": {
+            "type": "bool", "default": true,
+            "desc": "Archive subdir by day in mfile"
+        }, "month": {
+            "type": "bool", "default": true,
+            "desc": "Archive subdir by month in mfile"
+        }, "year": {
+            "type": "bool", "default": true,
+            "desc": "Archive subdir by year in mfile"
         }, "purge": {
             "type": "int", "default": 432000,
             "desc": "Age of archive file in seconds after which archived file is deleted"
@@ -72,61 +86,82 @@
         "snapshot": {
             "type": "bool", "default": false,
             "desc": "True when file contains a complete snapshot. Internally, this adds the snapshot indication to the feed, indicating the start and end of each snapshot. From a user's perspective, a join is paused until the first snapshot is received, subsequent snapshots are received peacemeal ."
-        }, "files": {
+        }, "inputData": {
              "type": "feedRef",
              "desc": "Input feed containing the file-names that are loaded"
-        }, "feed": {
+        }, "outputData": {
              "type": "feed", "key": true,
-             "desc": "Output feed containing the loaded data"
-        }, "fstats": {
+             "desc": "This is the loaded data outputted to this feed"
+        }, "outputStatsFeed": {
             "type": "feed",
-            "desc": "Output Feed containing stats about the loaded data"
-        }, "schema": {
+            "desc": "This is stats about the loaded data outputted to this feed"
+        }, "inputSchema": {
             "type": "choice",
-            "desc": "Define how to get the schema",
+            "desc": "How to get the schema",
             "tshark": {
-                "type": "bool", "default": true,
+                "type": "bool",
                 "desc": "Process pcap files through tshark using -t json and use predefined procedures to clean up the tshark json."
-            }, "csvHeaderRow": {
-                "type": "int", "default": 0,
-                "desc": "CSV row count for files containing a CSV header row at the row count. Rows prior to the header row, are ignored and not processed as data nor headers."
-            }, "file": {
+            }, "csv": {
+                "type": "int",
+                "desc": "Input file are CSV containing the header row and 'csv' is the row count for the CSV header row. Rows prior to the header row, are ignored and not processed as data nor headers. Rows after the header row are processed as data."
+            }, "xls": {
+                "type": "bool",
+                "desc": "Input is a Microsoft xls."
+            }, "feed": {
                 "type": "composite",
-                "desc": "Schema is found in a separate file",
+                "desc": "Input file format is provided by another feed separated from the data feed.",
                 "feed": {
                      "type": "feedRef",
-                     "desc": "Inputted file name(s) containing the schema"
-                }, "filetype": {
+                     "desc": "Input feed that provides the schema."
+                }, "format": {
                     "type": "choice",
-                    "desc": "Type of schema in the file",
-                    "oracleTable": {
-                         "type": "str", "default": "",
-                         "desc": "When not default, schema is an Oracle formatted schema, and look for the schema labeled with the table-name"
-                    }, "csvRowCount": {
-                         "type": "int", "default": 0,
-                         "desc": "When gt 0, schema is csv formatted headers. This is the row count to the header row for this schema. Count starts at 1."
+                    "desc": "Type of schema in the feed.",
+                    "sqlOracleTable": {
+                         "type": "str",
+                         "desc": "There's no standard SQL, this is Oracle SQL and the feed may send multiple table definitions but sqlOracleTable must identify one table in the schema which is used to parse the data."
+                    }, "csv": {
+                         "type": "int",
+                         "desc": "The CSV headers at csvRowCount."
                     }
                 }
             }
         }, "errors": {
             "type": "feed", "key": true,
             "default": "{feed}.errors",
-            "desc": "Output feed containing filename and error, for files that failed to load."
+            "desc": "Output feed containing inputted filename and an error message."
         }, "cleanup": {
             "type": "composite", "default": null,
-            "desc": "Instructions to cleanup the json that is outputted by parsing the data. These instructions are in addition to any automatic cleanup already performed by parsing",
-            "valuelabels": {
-                "type": "path", "default": null,
-                "desc": "name of file with a list of <blocklabel>,<keylabel>,<replacelabel>."
+            "desc": "Instructions to cleanup the output. This is in addition to any automatic cleanup already performed by parsing",
+            "replace": {
+                "type": "listComposites",
+                "desc": "Nested <blocklabel> containing <keylabel> and <replacelabel>, value at <keylabel> is replaced with value at <replacelabel>",
+                "blocklabel": {
+                    "type": "str"
+                }, "keylabel": {
+                    "type": "str"
+                }, "replacelabel": {
+                    "type": "str"
+                }
             }, "ignore": {
-                "type": "path", "default": null,
-                "desc": "name of file with a list of <label> to ignore"
+                "type": "listComposites",
+                "desc": "<label> and nested blocks are ignored",
+                "label": {
+                    "type": "str"
+                }
             }, "nest": {
-                "type": "path", "default": null,
-                "desc": "name of file with list of <label> to nest"
+                "type": "listComposites",
+                "desc": "Add a nesting at <label> using value at <label> as the key",
+                "label": {
+                    "type": "str"
+                }
             }, "trunc": {
-                "type": "path", "default": null,
-                "desc": "name of file with list of <label>, <value> to be truncated beyond value"
+                "type": "listComposites",
+                "desc": "Nested labels under <label> with <value> are ignored",
+                "label": {
+                    "type": "str"
+                }, "value": {
+                    "type": "str"
+                }
             }
         }
     }, "logicalcondition.macro": {

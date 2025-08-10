@@ -57,7 +57,7 @@ Fig 1. General overview.
             Hallelu -> _JahReq_ -> Congregation >create> Jah
             Hallelu <- _JanCfm_ <- Congregation
 
-       5. Hallelu established the streams:
+       5. Hallelu establishes the streams:
             5.1, instructs the receiving Jah to expect a stream;
             5.2  instructs the sending Jah to create the stream and start
                  sending data (act).

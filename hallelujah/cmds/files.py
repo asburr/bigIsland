@@ -10,7 +10,7 @@
 # 
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
 #
-from hallelujah.cmds.cmd import Cmd
+from hallelujah.cmds.cmd import Cmd, Feed
 import os.path
 import json
 import re
@@ -30,9 +30,9 @@ class ProcessFile():
     processFilePrefix = ".processfile_"
     processFilePrefixLen = len(".processfile_")
 
-    def __init__(self, processFileDir: str, filePath: str):
+    def __init__(self, processFileDir: str, path: str):
         """
-        Create a processFile for filePath.
+        Create a processFile for path.
         Reads processFile when it already exists, otherwise creates a
         new processFile using atomicWrite() which prevents two processes
         creating the same file. fileSync is False when another process
@@ -41,7 +41,7 @@ class ProcessFile():
         """
         self.processFilePath = processFilePath = os.path.join(
             processFileDir,
-            ProcessFile.processFilePrefix+os.path.basename(filePath)
+            ProcessFile.processFilePrefix+os.path.basename(path)
         )
         if os.path.isfile(processFilePath):
             self.fileSync = False
@@ -54,7 +54,7 @@ class ProcessFile():
         else:
             self.fileSync = False
             self.uuid = str(uuid.uuid4())
-            self.path = filePath
+            self.path = path
             self.found = int(time.time())
             self.processing = 0
             self.processed = 0
@@ -66,10 +66,10 @@ class ProcessFile():
         return "%d"%self.fileSync
 
     @staticmethod
-    def factory(pfentry: posix.DirEntry, filePath: str) -> (bool, "ProcessFile"):
+    def factory(pfentry: posix.DirEntry, path: str) -> (bool, "ProcessFile"):
         """
         factory() creates ProcessFile object from an existing file (dirEntry).
-        Return False when entry is not a the name of a process file.
+        Return False when entry is not the name of a process file.
         Return True and None when process file expired/no-associated-file and dirEntry is deleted.
         Return True and ProcessFile when process file exists/was-created.
         """
@@ -77,13 +77,13 @@ class ProcessFile():
             return False, None
         if len(pfentry.name) == ProcessFile.processFilePrefixLen:
             return False, None
-        file = os.path.join(filePath,pfentry.name[ProcessFile.processFilePrefixLen:])
+        file = os.path.join(path,pfentry.name[ProcessFile.processFilePrefixLen:])
         if not os.path.isfile(file):
             os.remove(pfentry.path)
             return True, None
         pf = ProcessFile(
             processFileDir=os.path.dirname(pfentry.path),
-            filePath=filePath
+            filePath=path
         )
         if not pf.fileSync:
             return True, None
@@ -134,7 +134,7 @@ class ProcessFile():
         is second in the file.
         So, both processes read test to see if their UUID is the first in
         the file, for example,
-            with open("crappy","r") as f:
+            with open("test","r") as f:
                print(json.loads(next(f)))
             {'uuid': 'a543f775-e1d7-4434-8ea7-97c2a0fdffcb'}
         When the UUID matches, the process has the file. When the UUID does
@@ -180,6 +180,23 @@ class ProcessFile():
         return self.processed != 0
 
 
+class FilesFeed(Feed):
+    def __init__(self,name:str,regex:str,reverse:bool,order:dict):
+      super().__init__(name)
+      self.regex: re.Pattern = regex
+      self.reverse: bool = reverse # Parameter to sorted(modifiedTime)
+      self.order: dict = order # modifiedTime: set(path)
+    def __str__(self): return f"{super.__str__()} path regex={self.regex} reverse={self.reverse} order={self.order}"
+
+
+class FilesDirModifiedTimes():
+    def __init__(self): self.times = {}
+    def empty(self): self.times = {}
+    def isEmpty(self): return self.times == {}
+    def add(self,path:str): self.times[path]=os.path.getmtime(path)
+    def items(self): return self.times.items()
+
+
 class Files(Cmd):
     """
     Files: uses os.path.getmtime(), it returns an accurate timestamp for the
@@ -192,66 +209,69 @@ class Files(Cmd):
     """
     def __init__(self, cmd: dict):
         super().__init__()
-        self.path=cmd["path"]["path"]
-        self.readonly=cmd["path"].get("readonly",self.path)
-        self.depth=cmd["path"]["depth"]
-        self.feeds = []
-        for feed in cmd["path"]["feeds"]:
-            self.feeds.append({
-                "feed": feed["feed"],
-                "regex": re.compile(feed["regex"], re.IGNORECASE),
-                "order": {}
-            })
-        if len(self.feeds) == 0:
-            raise Exception("Files has no feeds!")
-        self.path_mtimes = {}  # Modified times for root path and subdirs.
-        self.cntPath = self.path
-        self.cntProcPath = self.readonly
+        self.cmd:dict = cmd["path"]
+        self.path:str = self.cmd["path"]
+        self.readonly:str = self.cmd.get("readonly",self.path)
+        self.depth:int = self.cmd["depth"]
+        for feed in self.cmd["feeds"]:
+            feed = FilesFeed(
+                name=feed["feed"],
+                regex=re.compile(feed["regex"], re.IGNORECASE),
+                reverse=(self.cmd["order"]=="oldest"),
+                order={}
+            )
+            self.feeds.add(feed)
+        self.feeds.sanity()
+        self.path_mtimes = FilesDirModifiedTimes()
+        self.currentPath:str = self.path
+        self.currentProcPath:str = self.readonly
+        self.coupled:bool = self.path == self.readonly
+        self.cntDepth:int = self.depth
+
+    def srtPath(self) -> None:
+        """ Starts Files at the root path.
+            currentPath
+        """
+        self.currentPath = self.path
+        self.currentProcPath = self.readonly
         self.coupled = self.path == self.readonly
         self.cntDepth = self.depth
-        self.debug = False
 
-    # Starts Files at the root paths.
-    def srtPath(self) -> None:
-        self.cntPath = self.path
-        self.cntProcPath = self.readonly
-        self.cntDepth = self.depth
-
-    # Change dir for Files, to a path within the root path.
     def setPath(self,path:str) -> None:
+        """ Change dir for Files, to a path within the root path. """
         if not path.startswith(self.path):
             raise Exception("Path must start with "+self.path+" path="+path)
-        self.cntPath = path
+        self.currentPath = path
         if self.coupled:
-            self.cntProcPath = path
+            self.currentProcPath = path
         else:
             # path.join returns 2nd param when it starts with a slash(/),
             # so +1 is needed.
-            self.cntProcPath = os.path.join(self.readonly,path[len(self.path)+1:])
+            self.currentProcPath = os.path.join(self.readonly,path[len(self.path)+1:])
         self.cntDepth = self.pathDepth(path) - self.depth
 
-    # Change dir for Files, into a subdir of the current dir.
     def nxtPath(self,de: posix.DirEntry) -> bool:
+        """ Change dir for Files, into a subdir of the current dir. """
         if self.cntDepth == 0:
             return False
         if self.coupled:
-            self.cntProcPath = de.path
+            self.currentProcPath = de.path
         else:
             # path.join returns 2nd param when it starts with a slash(/),
             # so +1 is needed.
-            self.cntProcPath = os.path.join(self.readonly,de.path[len(self.path)+1:])
-        self.cntPath = de.path
+            self.currentProcPath = os.path.join(self.readonly,de.path[len(self.path)+1:])
+        self.currentPath = de.path
         self.cntDepth -= 1
 
-    # Change dir for Files, out of a subdir and back into the parent dir.
     def prvPath(self) -> None:
+        """ Change dir for Files, out of a subdir and back into the parent dir. """
         if self.cntDepth > self.depth:
             raise Exception("too many prvPath compared to nxtPath "+str(self.cntDepth))
-        self.cntPath = os.path.dirname(self.cntPath)
+        self.currentPath = os.path.dirname(self.currentPath)
         if self.coupled:
-            self.cntProcPath = self.cntPath
+            self.currentProcPath = self.currentPath
         else:
-            self.cntProcPath = os.path.dirname(self.cntProcPath)
+            self.currentProcPath = os.path.dirname(self.currentProcPath)
         self.cntDepth += 1
 
     def __str__(self) -> str:
@@ -262,43 +282,36 @@ class Files(Cmd):
                 str(self.feeds))
 
     def data(self, feedName: str, n:int) -> list:
+        """ Returns a sample of n data items from feedName. """
         ret = []
         if n <= 0:
             return ret
         i = 0
-        for feed in self.feeds:
-            if feed["feed"] == feedName:
-                for modifiedTime in sorted(feed["order"]):
-                    j = len(ret)
-                    for pn in feed["order"][modifiedTime]:
-                        pf = ProcessFile(
-                            processFileDir=self.cntProcPath,
-                            filePath=pn
-                        )
-                        if pf.fileSync:
-                            i += 1
-                            ret.append(pn)
-                            if i == n:
-                                break
-                    # Remove process file that are to be returned.
-                    for pn in ret[j:]:
-                        feed["order"][modifiedTime].remove(pn)
-                    if i == n:
-                        return ret
+        for feed in self.feed(feedName):
+            for modifiedTime in sorted(feed.order,reverse=feed.reverse):
+                for pn in feed.order[modifiedTime]:
+                    pf = ProcessFile(
+                        processFileDir=self.currentProcPath,
+                        filePath=pn
+                    )
+                    if pf.fileSync:
+                        i += 1
+                        ret.append(pn)
+                        if i == n:
+                            break
         return ret
 
-    def execute(self) -> bool:
+    def process(self) -> dict:
         """
         Avoid re-scanning a directory that has not changed by tracking
         directory's modification time in path_mtimes, which changes
         when directory changes i.e. something added/removed in the directory.
         """
-        if len(self.path_mtimes) == 0:
+        if self.path_mtimes.isEmpty():
             self.srtPath()
-            self.initialDirScan()
+            yield from self.initialDirScan()
         else:
-            self.maintenanceDirScan()
-        return False  # 
+            yield from self.maintenanceDirScan()
 
     @classmethod
     def removeNest(cls, dir: str) -> None:
@@ -309,41 +322,40 @@ class Files(Cmd):
                 os.remove(de.path)
         os.rmdir(dir)
 
-    def addFileToFeed(self, path: str, mtime: int) -> None:
-        for feed in self.feeds:
-            o = feed["order"]
-            if feed["regex"].match(path):
-                self.disco.load(path)
+    def addFileToFeed(self, path: str, mtime: int) -> (str,str):
+        for feed in self.feeds.yields():
+            o = feed.order
+            if feed.regex.match(path):
                 o.setdefault(mtime,set()).add(path)
-                return True
-        return False
+                yield (feed.name,path)
 
-    # Read files into memory, process subdir upto self.depth.
-    # Keep track of path's modified timestamp.
     def initialDirScan(self) -> None:
-        # print("initialDirScan %s %s %d" % (self.cntProcPath,self.cntPath,self.cntDepth))
-        if not os.path.isdir(self.cntPath):
-            # raise Exception("No such directory "+self.cntPath)
+        """ Read files into memory, process subdir upto self.depth.
+            Keep track of path's modified timestamp.
+        """
+        # print("initialDirScan %s %s %d" % (self.currentProcPath,self.currentPath,self.cntDepth))
+        if not os.path.isdir(self.currentPath):
+            # raise Exception("No such directory "+self.currentPath)
             return
-        if not os.path.isdir(self.cntProcPath):
-            os.mkdir(path=self.cntProcPath)
-        self.path_mtimes[self.cntPath] = os.path.getmtime(self.cntPath)
+        if not os.path.isdir(self.currentProcPath):
+            os.mkdir(path=self.currentProcPath)
+        self.path_mtimes.add(self.currentPath)
         processfiles = set()
         # scandir returns hidden files (dot files), but not current dir (.)
         # and parent dir (..).
-        for de in os.scandir(self.cntPath):
+        for de in os.scandir(self.currentPath):
             if de.is_file():
                 # When coupled, scandir also finds the process files. Process
                 # File factory removes the file when it should not exist and
                 # returns False, and returns the ProcessFile object and True
                 # when it exists.
                 if self.coupled:
-                    (isPFilename, pFile) = ProcessFile.factory(de,self.cntPath)
+                    (isPFilename, pFile) = ProcessFile.factory(de,self.currentPath)
                     if isPFilename:
                         if pFile:
                             processfiles.add(pFile.path)
                         continue
-                self.addFileToFeed(de.path, os.path.getmtime(de.path))
+                yield from self.addFileToFeed(de.path, os.path.getmtime(de.path))
             elif de.is_dir() and self.cntDepth > 0:
                 self.nxtPath(de)
                 self.initialDirScan()
@@ -351,78 +363,78 @@ class Files(Cmd):
         if not self.coupled:
             self.cleanupProcessPath(processfiles)
 
-    # Scan processpath, cleanup processfile using factory(). 
     def cleanupProcessPath(self, processfiles: set)  -> None:
-        for de in os.scandir(self.cntProcPath):
+        """ Scan processpath, cleanup processfile using factory(). """
+        for de in os.scandir(self.currentProcPath):
             if de.path not in processfiles:
-                ProcessFile.factory(de,self.cntPath)
+                ProcessFile.factory(de,self.currentPath)
             if de.is_dir():
-                if not os.path.isdir(self.cntPath):
-                    self.recursiveRemove(os.path.join(self.cntProcPath,de.name))
+                if not os.path.isdir(self.currentPath):
+                    self.recursiveRemove(os.path.join(self.currentProcPath,de.name))
 
-    # No os.path.depth()?
     def pathDepth(self, path: str) -> int:
+        """ Because there is no os.path.depth()! """
         depth = 0
         while len(path) > 0:
             depth += 1
             path=os.path.dirname(path)
         return depth
 
-    # To be called when a directory has changed, to purge from memory all
-    # of the files in the directory. This is accomplished by looking through
-    # the feeds, the mtimes in each feed, and purge when the dirpath is in
-    # the filepath.
     def purgeCacheForModifiedDir(self) -> None:
-        for feed in self.feeds:
-            o = feed["order"]
+        """
+        To be called when a directory has changed, to purge from memory all
+        of the files in the directory. This is accomplished by looking through
+        the feeds, the mtimes in each feed, and purge when the dirpath is in
+        the filepath.
+        """
+        for feed in self.feeds.yields():
+            o = feed.order
             newo = {}
             for mtime, l in o.items():
                 # Dont rebuild the set unless it is needed.
                 rebuild = False
                 for path in l:
-                    if path.startswith(self.cntPath):
+                    if path.startswith(self.currentPath):
                         rebuild = True
                         break
                 if rebuild:
                     newl = set()
                     for path in l:
-                        if not path.startswith(self.cntPath):
+                        if not path.startswith(self.currentPath):
                             newl.add(path)
                     if len(newl) > 0:
                         newo[mtime] = newl
                 else:
                     newo[mtime] = l
-            feed["order"] = newo
+            feed.order = newo
 
-    # Check the directory's mtime in memory with the mtime on disk, to detect
-    # changes in the directory.
-    # Purge the in memory cache for the directory, and rebuild this cache, and
-    # resync the processFiles too. Also, run the initialDirScan for any new
-    # subdirs.
     def maintenanceDirScan(self) -> bool:
+        """
+        Check the directory's mtime in memory with the mtime on disk, to detect
+        changes in the directory.
+        Purge the in memory cache for the directory, and rebuild this cache, and
+        resync the processFiles too. Also, run the initialDirScan for any new
+        subdirs.
+        """
         path_mtimes = self.path_mtimes
-        self.path_mtimes = {}
-        for filepath, mtime in path_mtimes.items():
+        self.path_mtimes.empty()
+        for path, mtime in path_mtimes.items():
             try:
-                current_mtime = os.path.getmtime(filepath)
-            except FileNotFoundError:  # Directory removed!
+                self.path_mtimes.add(path)
+            except FileNotFoundError:  # file removed!
                 continue
-            if mtime != current_mtime: # Directory has changed.
-                # print("dir changed "+filepath)
-                self.setPath(filepath)
+            if mtime != self.path_mtimes.get(path):
+                # print("Modification in "+path)
+                self.setPath(path)
                 self.cleanupProcessPath(set())
                 self.purgeCacheForModifiedDir()
-                self.path_mtimes[filepath] = current_mtime
-                for de in os.scandir(filepath):
+                for de in os.scandir(path):
                     if de.is_file():
-                        self.addFileToFeed(de.path, os.path.getmtime(de.path))
+                        yield from self.addFileToFeed(de.path, os.path.getmtime(de.path))
                     elif (de.is_dir()
                           and de.path not in path_mtimes
                           and self.pathDepth(de.path) <= self.depth
                     ):
                         self.nxtPath(de)
                         self.initialDirScan()
-        tmp = self.path_mtimes
         self.path_mtimes = path_mtimes
-        for k,v in tmp.items():
-            self.path_mtimes[k] = v

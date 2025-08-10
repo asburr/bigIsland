@@ -10,29 +10,56 @@
 # 
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
 #
-from cmd import Cmd
+from hallelujah.cmds.cmd import Cmd
 import tarfile
 import os.path
 # import ZipFile
 # import gzip
 import pandas as pd
+from magpie.src.musage import MUsage
 from discovery.src.CSVParser import CSVParser
 
 
 class Loadf(Cmd):
     """
- Loadf: Loads data from a file
+    Loadf: Loads data from a file
     """
     def __init__(self, cmd: dict):
         super().__init__()
         self.fileHandlers = {
             ".xls": self.__readxls,
-            ".__xls__": self.__read__xls__,
             ".tar.gz": self.__readtargz,
             '.__tar.gz__': self.__read__targz__
         }
+        self.cmd:dict = cmd["loadf"]
+        self.snapshot = self.cmd["snapshot"]
+        self.inputData = self.cmd["inputFeed"]
+        self.outputData = self.cmd["outputFeed"]
+        self.outputStats = self.cmd["outputStatsFeed"]
+        inputSchema = self.cmd["inputSchema"]
+        self.parse = None
+        if "tshark" in inputSchema:
+            self.parse = self.readTshark
+        elif "csv" in inputSchema:
+            self.parse = self.readCSV
+        elif "xls" in inputSchema:
+            self.parse = self.readXLS
+        elif "feed" in inputSchema:
+            tmp = inputSchema["feed"]
+            self.feedName = tmp["feed"]
+            tmp = tmp["format"]
+            self.sqlOracleTable = False
+            self.csv = False
+            if "sqlOracleTable" in tmp:
+                pass
+            elif "csv" in tmp:
+                pass
+            else:
+                raise Exception("Unknown format {format}")
+        else:
+            raise Exception("Unknown inutSchema {inputSchema}")
 
-    def execute(self) -> None:
+    def execute(self, musage: MUsage) -> None:
         return
 
     # Finds the fileHandler to read the file from Network or Local disk.
@@ -49,12 +76,9 @@ class Loadf(Cmd):
         with pd.ExcelFile(fn) as e:
             d = {"sheets": []}
             for sn in e.sheet_names:
-                d["sheets"].append(sn+".__xls__")
+                d["sheets"].append(sn)
+                d[sn] = e.parse(sheet=sn).to_json()
             return d
-
-    def __read__xls__(self, fn: str, desc: dict) -> any:
-        sn = fn[:-8]
-        return e.parse(sheet=sn).to_json()
 
     def __readtargz(self, fn: str, desc: dict) -> any:
         with tarfile.open(fn, "r:gz") as tar:
@@ -83,7 +107,7 @@ class Loadf(Cmd):
         pass
 
     def __parsetsv(self, f: any, offset:int, until: int) -> any:
-        return CSVParser("tsv").toJSON_FD(f,offset,until)
+        yield from CSVParser("tsv").toJSON_FD(f,offset,until)
 
     def __parsecsv(self, f: any, offset:int, until: int) -> any:
-        return CSVParser("csv").toJSON_FD(f,offset,until)
+        yield from CSVParser("csv").toJSON_FD(f,offset,until)

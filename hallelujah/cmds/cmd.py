@@ -10,51 +10,90 @@
 # 
 # See the GNU General Public License, <https://www.gnu.org/licenses/>.
 #
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from magpie.src.musage import MUsage
 from discovery.src.discovery import SchemaDiscovery
 
-class Cmd(ABC):
+class Feed:
+    """ A data feed. """
+    def __init__(self,name:str): self.name = name
+    def __str__(self): return self.name
+    def __eq__(self,o): return str(o) == str(self)
+    def __gt__(self,o): return str(o) > str(self)
+    def __lt__(self,o): return str(o) < str(self)
+
+
+class Feeds:
+    """ Mapping of feed name to Feed. """
+    def __init__(self):
+        self.feeds:dict = {}
+    def add(self,feed:Feed) -> None:
+        """ Add a Feed. """
+        if feed.name in self.feeds: raise Exception(f"{feed.name} exists")
+        self.feeds[feed.name]=feed
+    def get(self,feedName: str) -> Feed:
+        """ Get a Feed object. """
+        return self.feeds.get(feedName)
+    def yields(self) -> Feed:
+        """ Iterate through the Feed objects. """
+        for feed in self.feeds.values(): yield feed
+    def sanity(self) -> None:
+        """ At least one feed. """
+        if len(self.feeds) == 0:
+            raise Exception("No feeds!")
+    def __str__(self): return f"{self.feeds}"
+    def __eq__(self,o): return str(o) == str(self)
+    def __gt__(self,o): return str(o) > str(self)
+    def __lt__(self,o): return str(o) < str(self)    
+
+
+class Cmd:
     """
-    Cmd: Abstract class for database commands.
+    Cmd: Abstract class for hallelujah commands.
+    Ages off the schema after a week (168 hours).
     """
     def __init__(self):
-        """
-        Cmd ages off the schema after a week (168 hours).
-        """
-        print("Init of cmd")
-        self.disco = SchemaDiscovery(ageoff_hour_limit=168)
-        print(self.disco)
-        self.testReceiver = None
+        self.disco:SchemaDiscovery = SchemaDiscovery(ageoff_hour_limit=168)
+        self.debug:bool = False
+        self.feeds = Feeds()
 
     def schema(self) -> any:
         """
-         schema: The schema is created by self.disco, and is a description
-         of the structure of the inputted data as seen so far by this command.
-         self.execute() must load inputted data into self.disco.load().
-         return self.disco.r
-         Is a generator, yielding False and first sample, and yielding True
-         and last sample.
-         """
+        Returns the schema as created by self.disco. Schema is a description
+        of the structure of the inputted data as seen so far by this command.
+        self.execute() must load inputted data into self.disco.load().
+        """
         return self.disco.r
 
     @abstractmethod
     def data(self, feedName: str, n:int) -> list:
         """
-        data: Returns a list of the number of data items requested from the feed.
+        Returns a sample of n data items from feedName.
         """
-        raise Exception("Not implemented")
+        raise Exception("abstract should be implemented in subclass")
+        # for example,
+        return [f"data{i}" for i in range(n)] # list of n fake data items.
+        return [] # Empty list when nothing to return.
+
+    def execute(self, musage: MUsage) -> None:
+        """
+        Executes the command for all of the available input, until there is
+        nothing to do, or when resources (musage) are exhausted.
+        """
+        if self.stopExecution(musage): return
+        for data_json in self.process():
+            self.disco.load(data_json)
+            if self.stopExecution(musage): return
 
     @abstractmethod
-    def execute(self, musage: MUsage) -> bool:
+    def process(self) -> object:
         """
-         execute: Runs one execution of the command. Executes the command
-         for all of the available input, until there is nothing to
-         do, or when self.stopExecution(musage) is True.
-         When processed something and more may be available, return True.
-         When nothing to process and needing to sleep, return False.
-         """
-        raise Exception("Not implemented")
+        Returns a json compatable Object resulting from one execution of the command.
+        """
+        raise Exception("abstract should be implemented in subclass")
+        # Examples,
+        return [1,2,3] # processed something into a json compatable list.
+        return None # Nothing to process.
 
     def stopExecution(self, musage: MUsage) -> bool:
         """

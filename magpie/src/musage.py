@@ -28,6 +28,18 @@ import socket
 
 
 class MUsage():
+    """
+    MUsage is a wrapper for psutil, providing six functions that return
+    percentage usage:
+      memoryUsage(), memoryFree()
+      cpuUsage(), cpuFree()
+      diskUsage(dir="/"), diskFree(dir="/")
+     CPU Usage is complex. CPU values are running totals. Current
+     percentage is derived from the different between current totals and totals
+     gather a least a second ago. See the list self.cpuidle. cpuidle[0] is
+     total from at least one second ago. cpuidle[1] is recent totals. cpuidle[2]
+     is current usage.
+    """
 
     def __init__(self):
         self.cpuusage = [0, 0, 0]
