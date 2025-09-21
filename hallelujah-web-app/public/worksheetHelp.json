@@ -1,0 +1,728 @@
+{
+    "type": "composite",
+    "desc": "Hallelujah commands",
+    "files": {
+        "type": "composite",
+        "desc": "FILES finds files that have not been processed in a directory. Creates a process-file in the same directory for an unprocessed file.\process-file has the name '.process_<filename>', and the format:\n{\n'uuid': str, # Unique ID for this process-file\n'path': str, # Full path to the file that is to be processed.\n'found': int, # Timestamp of when process-file was first created.\n'processing': int, # Timestamp set by FILE when sending path to a command, and also updated by command while processing.\n'processed': int # Timestamp when processing is done and complete.\n}.\nIn the configuration, a regex is used to associated a file with a feed. process-file is created in the same directory as the file being processed. Except, when the directory is read-only, in this case the configuration has a reference to a writable file system (see 'readonly') and that is where the process-file is created.\n Commands that consume the process-file shall also process the contents of the associated file that is found at the 'path'.  While the command is processing the contents of the file, it is periodically updating process-file with the current timesamp in the 'processing' field.\nPeriodically, FILES checks for hung processing. A hung process is when the 'processing' timestamp is more than 10 minutes old. It is assumed that hung processing shall not recover, and the process-file is recreated with a new UUID. If a hung processing should recover and resume processing the file, it will find a different UUID in the process-file, at which point it shall shutdown, stop processing the file, and make no changes to the process-file.\nPeriodically FILES checks for processing that has finished. Finished is when the 'processed' field is not zero. FILES has three choices at the finish:\n1/ When read-only file sytems, the process-file continues to exist until something else removes the actual file; 2/ When archiving, the processed file is moved to the archive, and the process-file is removed; 3/ Otherwise, the processed file and process-file are erased.",
+        "eg": "{p: { p:<path> d:1 ro:<path> fs:[ { f:<fileo> re:*\\.csv } ] a:{ p:<path> dateSubDir:day purge:60 diskUsage:70 onError:<path> } } }",
+        "root": {
+            "type": "str", "key": true,
+            "desc": "Root name for the feed of file names."
+        }, "path": {
+            "type": "composite",
+            "desc": "path to be processed",
+            "path": {
+                 "type": "path", "default": ".",
+                 "desc": "Path to load files from. Default is current directory."
+            }, "order": {
+                 "type": "str", "default": "newest",
+                 "choice": ["newest", "oldest"],
+                 "desc": "Order of file name retrieval"
+            }, "depth": {
+                "type": "int", "default": 0,
+                "desc": "Specifies the depth of subdir searching under input dir. Values are: no subdir(0); unlimited depth(-1); or, a depth(N)"
+            }, "readonly": {
+                "type": "path", "default": null,
+                "desc": "(readonly) is used when path (path) is read only. Touch-files are created to track prior processed files. (readonly) is a path on a writable file system where the touch-files can be created and deleted"
+            }, "feeds": {
+                "type": "listComposites",
+                "feed": {
+                    "type": "feed",
+                    "desc": "Label the feed of file names. Use format to include root, {root}.name."
+                },
+                "regex": {
+                    "type": "regex",
+                    "desc": "Regex string. For a single feed use '.*' to match all files"
+                }
+            }
+        },
+        "onProcessed": {
+            "type": "path", "default": null,
+            "desc": "Successful loaded file is moved to this location"
+        },
+        "onError": {
+            "type": "path", "default": null,
+            "desc": "Unsuccessfully loaded file is moved to this location. Cannot be used for readonly path. The default is to delete a unsuccessful file."
+        }
+    },
+    "archive": {
+        "type": "composite",
+        "desc": "archive files in an incoming directory to an archive directory with a default subdir structure of root/YYYY/MM/DD/file. The subdir structure may be changed using second, minute, hour, day, month, year.",
+        "inPath": {
+            "type": "path",
+            "desc": "File for this incoming directory are moved into the archive"
+        }, "archiveRootPath": {
+            "type": "path",
+            "desc": "The root directory for the archive subdirs."
+        }, "second": {
+            "type": "bool", "default": false,
+            "desc": "Archive subdir by second in mfile"
+        }, "minute": {
+            "type": "bool", "default": false,
+            "desc": "Archive subdir by minute in mfile"
+        }, "hour": {
+            "type": "bool", "default": false,
+            "desc": "Archive subdir by hour in mfile"
+        }, "day": {
+            "type": "bool", "default": true,
+            "desc": "Archive subdir by day in mfile"
+        }, "month": {
+            "type": "bool", "default": true,
+            "desc": "Archive subdir by month in mfile"
+        }, "year": {
+            "type": "bool", "default": true,
+            "desc": "Archive subdir by year in mfile"
+        }, "purge": {
+            "type": "int", "default": 432000,
+            "desc": "Age of archive file in seconds after which archived file is deleted"
+        }, "diskUsage": {
+            "type": "int", "default": 70,
+            "desc": "Percentage usage of the file system where the archive is located, at or above this usage triggers the oldest archived files to be deleted"
+        }
+    },
+    "loadf": {
+        "type": "composite",
+        "desc": "Loads data from a file",
+        "snapshot": {
+            "type": "bool", "default": false,
+            "desc": "True when file contains a complete snapshot. Internally, this adds the snapshot indication to the feed, indicating the start and end of each snapshot. From a user's perspective, a join is paused until the first snapshot is received, subsequent snapshots are received peacemeal ."
+        }, "inputData": {
+             "type": "feedRef",
+             "desc": "Input feed containing the file-names that are loaded"
+        }, "outputData": {
+             "type": "feed", "key": true,
+             "desc": "This is the loaded data outputted to this feed"
+        }, "outputStatsFeed": {
+            "type": "feed",
+            "desc": "This is stats about the loaded data outputted to this feed"
+        }, "inputSchema": {
+            "type": "choice",
+            "desc": "How to get the schema",
+            "tshark": {
+                "type": "bool",
+                "desc": "Process pcap files through tshark using -t json and use predefined procedures to clean up the tshark json."
+            }, "csv": {
+                "type": "int",
+                "desc": "Input file are CSV containing the header row and 'csv' is the row count for the CSV header row. Rows prior to the header row, are ignored and not processed as data nor headers. Rows after the header row are processed as data."
+            }, "xls": {
+                "type": "bool",
+                "desc": "Input is a Microsoft xls."
+            }, "feed": {
+                "type": "composite",
+                "desc": "Input file format is provided by another feed separated from the data feed.",
+                "feed": {
+                     "type": "feedRef",
+                     "desc": "Input feed that provides the schema."
+                }, "format": {
+                    "type": "choice",
+                    "desc": "Type of schema in the feed.",
+                    "sqlOracleTable": {
+                         "type": "str",
+                         "desc": "There's no standard SQL, this is Oracle SQL and the feed may send multiple table definitions but sqlOracleTable must identify one table in the schema which is used to parse the data."
+                    }, "csv": {
+                         "type": "int",
+                         "desc": "The CSV headers at csvRowCount."
+                    }
+                }
+            }
+        }, "errors": {
+            "type": "feed", "key": true,
+            "default": "{feed}.errors",
+            "desc": "Output feed containing inputted filename and an error message."
+        }, "cleanup": {
+            "type": "composite", "default": null,
+            "desc": "Instructions to cleanup the output. This is in addition to any automatic cleanup already performed by parsing",
+            "replace": {
+                "type": "listComposites",
+                "desc": "Nested <blocklabel> containing <keylabel> and <replacelabel>, value at <keylabel> is replaced with value at <replacelabel>",
+                "blocklabel": {
+                    "type": "str"
+                }, "keylabel": {
+                    "type": "str"
+                }, "replacelabel": {
+                    "type": "str"
+                }
+            }, "ignore": {
+                "type": "listComposites",
+                "desc": "<label> and nested blocks are ignored",
+                "label": {
+                    "type": "str"
+                }
+            }, "nest": {
+                "type": "listComposites",
+                "desc": "Add a nesting at <label> using value at <label> as the key",
+                "label": {
+                    "type": "str"
+                }
+            }, "trunc": {
+                "type": "listComposites",
+                "desc": "Nested labels under <label> with <value> are ignored",
+                "label": {
+                    "type": "str"
+                }, "value": {
+                    "type": "str"
+                }
+            }
+        }
+    }, "logicalcondition.macro": {
+        "type": "composite",
+        "desc": "logical condition i.e. l:a o:eq r:{ f:b }",
+        "l": {
+            "type": "field",
+            "desc": "left handside of the condition is a field name"
+        }, "o": {
+            "type": "str", "default": "eq", "desc": "Logical condition",
+            "choice": ["eq", "ne", "gt", "lt", "gte", "lte"]
+        }, "r": {
+            "type": "choice", "desc": "right handside",
+            "f": {
+                "type": "field",
+                "desc": "field name"
+            }, "v": {
+                "type": "any",
+                "desc": "value"
+            }
+        }
+    }, "logicalexpression.macro": {
+        "type": "composite",
+        "desc": "A nested expression, i.e. a eq 1 and b eq 2, l:{ c:{ l:a o:eq r:{ v:1 }} o:and c:{ c:{ l:b o:eq: r:{ v:2 }}}}",
+        "l": {
+            "type": "choice", "desc": "Left handside of the expression",
+            "c": {
+                "type": "logicalcondition.macro", "desc": "condition"
+            }, "e": {
+                "type": "logicalexpression.macro", "desc": "expression"
+            }
+        }, "o": {
+            "type": "str", "default": "and", "desc": "logicial condition",
+            "choice": ["and", "or"]
+        }, "c": {
+            "type": "logicalcondition.macro", "desc": "condition"
+        }
+    }, "fieldwhere.macro": {
+        "type": "composite",
+        "desc": "Identification of fields and, can identify particular value. i.e. {f:fred, w:<expression>}",
+        "f": {
+            "type": "field"
+        }, "w": {
+            "type": "logicalexpression.macro", "default": "{}",
+            "desc": "Default is the empty expression; all values."
+        }
+    }, "fieldpartition.macro": {
+        "type": "composite",
+        "desc": "Identification of fields and, may identify range of values. i.e. {f:fred, t:day}",
+        "f": {
+            "type": "field"
+        }, "t": {
+            "type": "str", "default": "day",
+            "choice": ["month", "day", "hour"]
+        }
+    }, "loads": {
+        "type": "composite",
+        "desc": "Load a sum of field(s) identified explicitly by name or, the default is sum all number fields. Sum can be partitioned by field(s) from the same feed. { f:data i:datai fs:[ { f:<fieldwhere> } ] p:[ { f:<fieldPartition> w:<logicalExpression> } ] }",
+        "feed": {
+            "type": "feed", "key": true
+        }, "input": {
+            "type": "feedRef", "desc": "The other feed"
+        }, "fields": {
+            "type": "listComposites",
+            "field": {
+                "type": "fieldwhere.macro"
+            }
+        }, "partition": {
+            "type": "listComposites",
+            "field": {
+                "type": "fieldpartition.macro"
+            }
+        }, "where": {
+            "type": "logicalexpression.macro", "default": null,
+            "desc": "restrict sum or, default is to sum all records"
+        }
+    }, "loadc": {
+        "type": "composite",
+        "desc": "Count occurence of values in field(s)",
+        "feed": {
+            "type": "feed", "key": true
+        }, "input": {
+            "type": "feedRef", "desc": "The other feed"
+        }, "count type": {
+            "type": "choice",
+            "all": {
+                "type": "bool", "default": true, "desc": "count all fields"
+            }, "fields": {
+                "type": "listComposites", "desc": "Fields to count",
+                "field": {
+                    "type": "fieldwhere.macro"
+                }
+            }
+        }, "partition": {
+            "type": "listComposites", "default": null, "desc": "Partition count",
+            "field": {
+                "type": "fieldpartition.macro"
+            }
+        }
+    }, "expand": {
+        "type": "composite",
+        "desc": "Add fields from values from within the same feed or from another feed. Two ways to join with the other feed. First is an explicit list of feed's fields. Second is by datatype, a list of datatypes identifies the feed's fields. { f:data j:{ fs:[ { f:<field> } ] } }",
+        "feed": {
+            "type": "feed", "key": true
+        }, "input": {
+            "type": "feedRef", "desc": "The feed to expand"
+        }, "join": {
+            "type": "composite", "default": null,
+            "desc": "Join",
+            "fields": {
+                "type": "listComposites", "default": null,
+                "desc": "List of feeds to join on.",
+                "field": {
+                    "type": "field"
+                }
+            }, "datatype": {
+                "type": "str", "default": null,
+                "desc": "Datatype with which to identify the field to join on. Alert when datatype is first obsolete in the feed. All fields with the datatype are expanded."
+            }, "with": {
+                "type": "feedRef", "default": null,
+                "desc": "Name of the other feed to join with, default is to join with itself"
+            }, "on": {
+                "type": "listComposites", "default": null,
+                "desc": "List of fields to join on. If datatype, then one field expected in o.f. Otherwise for named fields, then o.f must match the number of names in fs.f",
+                "field": {
+                    "type": "field"
+                }
+            }
+        }, "add": {
+            "type": "composite", "default": null,
+            "add": {
+                "type": "str",
+                "desc": "fred.name. Where name is the new field"
+            }, "fields": {
+                "type": "listComposites", "default": null,
+                "desc": "List of fields.",
+                "field": {
+                    "type": "field"
+                }
+            }, "fmt": {
+                "type": "fmt",
+                "desc": "{} style string format for new field. [] use python array slicing i.e. {}[1:3]. len({}) use python len to get the length of field."
+            }
+        }
+    }, "alert": {
+        "type": "composite",
+        "desc": "Email sent to alert of system issues.",
+        "feed": {
+            "type": "feed", "default": "{input}.alert", "key": true,
+            "desc": "Name for the feed of alerts"
+        }, "input": {
+            "type": "feedRef", "default": null,
+            "desc": "Flow of events that trigger the alert or, default is all errors"
+        }, "sumtype": {
+            "type": "str", "default": "SUM", "choice": ["SUMPARTITIONED", "SUM"],
+            "desc": "SUMPARTITIONED, one alert for each event; SUM, one alert for all events."
+        }, "email": {
+            "type": "email",
+            "desc": "Email a breakdown of files failed to load"
+        }, "period": {
+            "type": "int", "default": 86400,
+            "desc": "This is the period in second in between the email alerts."
+        }
+    }, "address.macro": {
+        "type": "composite",
+        "desc": "IP address and port",
+        "ip": {
+            "type": "str",
+            "desc": "Host name or ip addres."
+        },
+        "port": {
+            "type": "int",
+            "desc": "Port"
+        }
+    }, "routing.macro": {
+        "type": "bool",
+        "desc": "Routing indicator for Request and Indication messages as they traverse the Congregations. True when routing towards the summit Congregation. False and None when walking the congregations. False when from the left-hand-side and going down the right-hand-side. False when from right-hand-side and going back up to the parent. False when from parent and going down to left hand-side."
+    }, "_ConReq_": {
+        "type": "composite",
+        "desc": "Congregation requests connection into the database",
+        "routing": {
+            "type": "routing.macro"
+        }
+    }, "_ConCfm_": {
+        "type": "composite",
+        "desc": "Confirmation for ConReq. May be rerouted towards a partial cluster of congregations that this congregation will join. Returns the address(es) of the other congregations that comprise the cluster of up to three congregation that this congregation just joined. Also, returns the worksheets for each of the other congregations. These worksheets document the commands and sheets that are supported by the congregation. The worksheets are duplicated across the cluster, so each congregation has a copy of what the others support.",
+        "routing": {
+            "type": "routing.macro"
+        },
+        "Congregation": {
+            "type": "address.macro", "default": null,
+            "desc": "Resend is present when the final destination is not reached, and ConReq needs to be resent to this address to continue on its journey."
+        },
+        "cluster": {
+            "type": "composite", "default": null,
+            "desc": "Congregation has been added to this cluster",
+            "top": {
+                "type": "address.macro",
+                "desc": "Addresses of Congregation in the cluster"
+            },
+            "left": {
+                "type": "address.macro",
+                "desc": "Addresses of Congregation in the cluster"
+            },
+            "right": {
+                "type": "address.macro",
+                "desc": "Addresses of Congregation in the cluster"
+            },
+            "worksheet": {
+                "type": "any", "default": null,
+                "desc": "Worksheet detailing the commands supported by top congregation in the cluster."
+            }
+        }
+    }, "_CongregationSizeReq_": {
+        "type": "composite",
+        "desc": "Request the number of the congregations on the left and right of the node"
+    }, "_CongregationSizeCfm_": {
+        "type": "composite",
+        "desc": "Number of congregations on the left and right of the node",
+        "size": {
+            "type": "int",
+            "desc": "Count"
+        }
+    }, "_usageReq_": {
+        "type": "bool",
+        "desc": "Hallelujah requests host usage from Congregation."
+    }, "_usageCfm_": {
+        "type": "composite",
+        "desc": "Congregation to Hallelujah, host usage response.",
+        "host": {
+            "type": "str",
+            "desc": "Name of the host"
+        }, "cpuUsage": {
+            "type": "int",
+            "desc": "Percentage (0-100) usage"
+        }, "diskUsage": {
+            "type": "int",
+            "desc": "Percentage (0-100) usage"
+        }, "memoryUsage": {
+            "type": "int",
+            "desc": "Percentage (0-100) usage"
+        }, "timestamp": {
+            "type": "str",
+            "desc": "msdatetime.strftime() when usage was take"
+        }, "otherHosts": {
+            "type": "address.macro", "default": null,
+            "desc": "List of other hosts that this Congregation is aware of."
+        }
+    }, "cmdFilter.macro": {
+        "type": "composite",
+        "desc": "Sent from user to Hallelujah to find the first command in the database, or to Congregation to find the next command. Find by sheetUuid, cmdUuid, or feed.",
+        "sheetUuid": {
+            "type": "str", "default": null,
+            "desc": "Optional sheet UUID"
+        },
+        "cmdUuid": {
+            "type": "str", "default": null,
+            "desc": "Optional cmd UUID"
+        },
+        "feed": {
+            "type": "str", "default": null,
+            "desc": "Name of the feed served by the cmd"
+        }
+    }, "_cmdInd_": {
+        "type": "composite",
+        "desc": "Request commands running in the database",
+        "filters": {
+            "type": "cmdFilter.macro",
+            "desc": "Filter used to select the command in cmdInd"
+        },
+        "routing": {
+            "type": "routing.macro"
+        },
+        "cmdUuid": {
+            "type": "str",
+            "desc": "The last cmd UUID received in cmdRsp."
+        }
+    }, "_cmdRsp_": {
+        "type": "composite",
+        "desc": "Response from Congregation about the next command matching the criterior in cmdInd.",
+        "filters": {
+            "type": "cmdFilter.macro",
+            "desc": "Filter used to select the command in cmdInd"
+        },
+        "cmd": {
+            "type": "composite", "default": null,
+            "desc": "Cmd is optional, present when addressed has a command that matches the criterior",
+            "uuid": {
+                "type": "str",
+                "desc": "cmd UUID"
+            },
+            "sheetUuid": {
+                "type": "str",
+                "desc": "sheet UUID"
+            },
+            "cmd": {
+                "type": "any",
+                "desc": "The command"
+            }
+        },
+        "sheet": {
+            "type": "composite", "default": null,
+            "desc": "Sheet is optional, present when addressed has the sheet that matches the criterior",
+            "sheetUuid": {
+                "type": "str",
+                "desc": "sheet UUID"
+            },
+            "name": {
+                "type": "str",
+                "desc": "Name for the sheet"
+            }
+        },
+        "routing": {
+            "type": "routing.macro"
+        },
+        "Congregation": {
+            "type": "address.macro",
+            "desc": "Address of the Congregation where to send another cmdInd for the next command. Or, towards the summit for the first comInd"
+        }
+    }, "sheetFilter.macro": {
+        "type": "composite",
+        "desc": "Sent from user to Hallelujah to find the first sheet in the database, or to Congregation to find the next sheet.",
+        "sheetUuid": {
+            "type": "str", "default": null,
+            "desc": "Optional sheet UUID"
+        }
+    }, "_sheetInd_": {
+        "type": "composite",
+        "desc": "Request sheets in the database",
+        "filters": {
+            "type": "sheetFilter.macro",
+            "desc": "Filter used to select the command in sheetInd"
+        },
+        "routing": {
+            "type": "routing.macro"
+        },
+        "sheetUuid": {
+            "type": "str",
+            "desc": "The last cmd UUID received in sheetRsp."
+        }
+    }, "_sheetRsp_": {
+        "type": "composite",
+        "desc": "Response from Congregation about the next sheet matching the criterior in sheetInd.",
+        "filters": {
+            "type": "sheetFilter.macro",
+            "desc": "Filter used to select the sheet in sheetInd"
+        },
+        "sheet": {
+            "type": "composite", "default": null,
+            "desc": "Sheet is optional, present when addressed has the sheet that matches the criterior",
+            "uuid": {
+                "type": "str",
+                "desc": "sheet UUID"
+            },
+            "name": {
+                "type": "str",
+                "desc": "Name for the sheet"
+            }
+        },
+        "routing": {
+            "type": "routing.macro"
+        },
+        "Congregation": {
+            "type": "address.macro",
+            "desc": "Address of the Congregation where to send another sheetInd for the next sheet. Or, towards the summit for the first sheet"
+        }
+    }, "_schReq_": {
+        "type": "composite",
+        "desc": "Sent by user to Congregation to update the schema.",
+        "schema": {
+            "type": "any",
+            "desc": "New schema"
+        }
+    }, "_schCfm_": {
+        "type": "composite",
+        "desc": "Response to _schReq_",
+        "routing": {
+            "type": "routing.macro"
+        },
+        "Congregation": {
+            "type": "address.macro", "default": null,
+            "desc": "Address of the Congregation to re-send this request"
+        }
+    }, "_cmdReq_": {
+        "type": "composite",
+        "desc": "Sent by user to Congregation where the cmd is located to update/add a command.",
+        "cmdUuid": {
+            "type": "str",
+            "desc": "cmd UUID"
+        },
+        "sheetUuid": {
+            "type": "str",
+            "desc": "sheet UUID"
+        },
+        "oldcmd": {
+            "type": "any",
+            "desc": "Old command, that is being updated"
+        },
+        "newcmd": {
+            "type": "any",
+            "desc": "New command, {} to delete the command"
+        },
+        "routing": {
+            "type": "routing.macro"
+        }
+    }, "_cmdCfm_": {
+        "type": "composite",
+        "desc": "Response to _cmdReq_",
+        "routing": {
+            "type": "routing.macro"
+        },
+        "Congregation": {
+            "type": "address.macro", "default": null,
+            "desc": "Address of the Congregation to re-send this request"
+        },
+        "status": {
+            "type": "str",
+            "choice": ["redirect", "deleted", "created", "updated", "wrong version", "no change", "timeout"],
+            "desc": "Update status."
+        }
+    }, "_sheetReq_": {
+        "type": "composite",
+        "desc": "Sent from user to Congregation where the sheet is located to update a sheet.",
+        "sheetUuid": {
+            "type": "str",
+            "desc": "sheet UUID"
+        },
+        "oldname": {
+            "type": "str",
+            "desc": "Old new name for sheet"
+        },
+        "newname": {
+            "type": "str",
+            "desc": "New name for sheet"
+        },
+        "routing": {
+            "type": "routing.macro"
+        }
+    }, "_sheetCfm_": {
+        "type": "composite",
+        "desc": "Response to _sheetReq_",
+        "routing": {
+            "type": "routing.macro"
+        },
+        "Congregation": {
+            "type": "address.macro", "default": null,
+            "desc": "Address of the Congregation where to resend the sheetReq towards the summit. Or, towards the congregation that will house this sheet."
+        },
+        "status": {
+            "type": "str",
+            "choice": ["redirect", "deleted", "created", "updated", "wrong version", "no change", "timeout"],
+            "desc": "Update status."
+        }
+    }, "_JahReq_": {
+        "type": "_cmdReq_",
+        "desc": "Request to Congregation, from Hallelu, to create a Jah process"
+    }, "_JahCfm_": {
+        "type": "address.macro",
+        "desc": "Address of the Jah created from the _JahReq_"
+    }, "_streamReq_": {
+        "type": "composite",
+        "desc": "_streamReq_ is sent to Hallelu, from other Hallelu or User, to start a stream of data from the Jah. Same Message is forwarded to each Jah, to start stream processing which runs contineously building dataCfm messages so they are ready to be transmitted to the Receiver as soon _DatReq_.",
+        "streamUuid": {
+            "type": "str",
+            "desc": "Unique ID for this stream request"
+        }, "feed": {
+            "type": "feedRef", "default": null,
+            "desc": "Name a feed to stream"
+        }, "burst": {
+            "type": "int", "default": 1,
+            "desc": "Streams are synchronized, burst is the maximum number of documents to send before waiting for a dataCfm."
+        }, "streamType": {
+            "type": "str", "default": "parallel",
+            "choice": ["parallel", "parallelDistribution", "serial"],
+            "desc": "Parallel is a Receiver for every Jah, and data is sent in parallel between Jahs and Receivers i.e. loadf _data_ to expand. ParallelDistribution has a Receiver for every Jah and must have distribution keys, the data is sent in parallel, and to not overload a Receiver it gets data from one Jah at a time i.e. loadf _data_ to expand with a join. Serial has one Receiver, there may be many Jah but one Jah at a time is sending _data_ to the Receiver i.e. loadf to an external Receiver like a GUI."
+        }, "dataCols": {
+            "type": "listComposites", "default": null,
+            "desc": "The default is to stream all columns. Otherwise, this is a list of columns to be streamed.",
+            "fieldname": {
+                "type": "str",
+                "desc": "field name"
+            }
+        }, "distribution": {
+            "type": "listComposites", "default": null,
+            "desc": "The default is no distribution. Distribution divides the stream using the key columns. The key may be a complex type such as dict and list. The key is hashed, last bits of the hash selects the destination.",
+            "keyColumn": {
+                "type": "str",
+                "desc": "Column name"
+            }, "wildchar_masks": {
+                "type": "listComposites", "default": null,
+                "desc": "Although Jah may have many masks per length of value, the stream command wants the first mask per length of value. this mask is applied before hashing",
+                "wildchar": {
+                    "type": "str",
+                    "desc": "A single char that is the wildchar, i.e. X"
+                }, "mask": {
+                    "type": "str",
+                    "desc": "Mask is 1 for hashable char and 0 for wildchar, i.e. 1101 matches value ABCD which is converted to the wildchar value of ABXD before hashing"
+                }
+            }
+        }
+    }, "_streamCfm_": {
+        "type": "composite",
+        "desc": "_streamCfm_ stop retransmit of _streamReq_. Contains the address of the Jah to be communicated with to get the stream's data. For parallel streams, there is a list of address for all jah, the receiver is expected to create a receiver for each Jah, and each receiver communicate with one of the Jah. For serial streams, there is one address entrypoint Jah. When sent from Jah, the list of jahs is not present.",
+        "state": {
+            "type": "str", "default": "success",
+            "choice": ["success", "fail"],
+            "desc": "State of stream"
+        }, "jahs": {
+            "type": "address.macro", "default": null,
+            "desc": "Jahs"
+        }
+    }, "_streamCanReq_": {
+        "type": "composite",
+        "desc": "_streamCan_ is sent to Hallelu, from other Hallelu or User, to stop a stream of data from the Hallelu's Jah. Same Message is forwarded to each Jah.",
+        "streamUuid": {
+            "type": "str",
+            "desc": "stream UUID"
+        }
+    }, "_streamCanCfm_": {
+        "type": "composite",
+        "desc": "_streamCanCfm_ stops retransmit of _streamCan_",
+        "streamUuid": {
+            "type": "str",
+            "desc": "stream UUID"
+        }
+    }, "_streamTimeoutReq_": {
+        "type": "composite",
+        "desc": "_dataTimeoutReq_ is sent to a Hallelu, from other Hallelu or User, when the dataReq timeouts out to one of the Hallelu's Jah.",
+        "streamUuid": {
+            "type": "str",
+            "desc": "stream UUID"
+        }, "jah": {
+            "type": "address.macro",
+            "desc": "Jah that did not respond to dataReq."
+        }
+    }, "_streamTimeoutCfm_": {
+        "type": "composite",
+        "desc": "_dataTimeoutCfm_ is sent back to Receiver, and indicates the replacement Jah.",
+        "nxtJah": {
+            "type": "address.macro",
+            "desc": "The address of the replacement Jah, may be the same Jah for temporary problems."
+        }
+    }, "_dataReq_": {
+        "type": "composite",
+        "desc": "_dataReq_ is sent, from Hallelu or User, to a Jah.",
+        "streamUuid": {
+            "type": "str",
+            "desc": "stream UUID"
+        }
+    }, "_dataCfm_": {
+        "type": "composite",
+        "desc": "_data_ from Jah to Receiver.",
+        "data": {
+            "type": "any",
+            "desc": "the data"
+        }, "nxtJah": {
+            "type": "address.macro",
+            "desc": "Jah for next dataReq."
+        }
+    }, "test": {
+        "type": "composite",
+        "desc": "This comment returns the string:testing"
+    }
+}
